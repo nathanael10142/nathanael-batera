@@ -1,7 +1,7 @@
 """
 Modèles : Étudiants et leur parcours académique
 """
-from sqlalchemy import Column, String, Integer, ForeignKey, Date, Float, Text, JSON, Enum as SQLEnum
+from sqlalchemy import Column, String, Integer, ForeignKey, Date, Float, Text, JSON, Enum as SQLEnum, Boolean
 from sqlalchemy.orm import relationship
 import enum
 
