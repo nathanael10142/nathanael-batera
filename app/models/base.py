@@ -1,19 +1,16 @@
 """
-Modèle de base pour tous les modèles
+Archived SQLAlchemy base model.
+The original implementation has been moved to:
+  backend/legacy_sql_backup/app/models/base.py
+
+This placeholder prevents runtime imports of SQLAlchemy in a Firestore-only deployment.
 """
-from datetime import datetime
-from sqlalchemy import Column, Integer, DateTime, Boolean
-from sqlalchemy.ext.declarative import declarative_base
 
-Base = declarative_base()
+# Placeholder export used by code that imports app.models.base
+Base = None
 
-
-class BaseModel(Base):
-    """Modèle de base avec champs communs"""
-    __abstract__ = True
-    
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
-    is_active = Column(Boolean, default=True, nullable=False)
-    is_deleted = Column(Boolean, default=False, nullable=False)
+class BaseModel:
+    """Lightweight placeholder for the original BaseModel.
+    Do not rely on this for SQL operations. See legacy_sql_backup for original code.
+    """
+    pass

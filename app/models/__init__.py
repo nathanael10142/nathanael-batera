@@ -1,77 +1,17 @@
 """
-Import tous les modèles pour Alembic
+Re-exports légers pour intégration Firestore.
+Ce fichier expose des noms utilisés ailleurs mais évite d'exécuter
+logique SQL lourde au démarrage.
 """
-from app.models.base import Base, BaseModel
-from app.models.university import University, Faculty, Department, Option, AcademicYear, Session
-from app.models.student import (
-    Promotion, Class, Student, AcademicRecord,
-    CycleType, YearLevel, StudentStatus
-)
-from app.models.course import (
-    Course, CourseAssignment, CourseEnrollment, Grade, Teacher,
-    CourseType, Semester
-)
-from app.models.user import User, Role, Permission, role_permissions
-from app.models.financial import (
-    FacultyFinancialSettings, FeeStructure, Payment, AccountingEntry, FinancialReport,
-    PaymentMethod, PaymentStatus, FeeType
-)
-from app.models.communication import (
-    Conversation, ConversationParticipant, Message, MessageReadReceipt, Notification,
-    MessageType, ConversationType
-)
-from app.models.audit import AuditLog, SystemLog
 
+from types import SimpleNamespace
 
-__all__ = [
-    "Base",
-    "BaseModel",
-    # University structure
-    "University",
-    "Faculty",
-    "Department",
-    "Option",
-    "AcademicYear",
-    "Session",
-    # Students
-    "Promotion",
-    "Class",
-    "Student",
-    "AcademicRecord",
-    "CycleType",
-    "YearLevel",
-    "StudentStatus",
-    # Courses
-    "Course",
-    "CourseAssignment",
-    "CourseEnrollment",
-    "Grade",
-    "Teacher",
-    "CourseType",
-    "Semester",
-    # Users
-    "User",
-    "Role",
-    "Permission",
-    "role_permissions",
-    # Financial
-    "FacultyFinancialSettings",
-    "FeeStructure",
-    "Payment",
-    "AccountingEntry",
-    "FinancialReport",
-    "PaymentMethod",
-    "PaymentStatus",
-    "FeeType",
-    # Communication
-    "Conversation",
-    "ConversationParticipant",
-    "Message",
-    "MessageReadReceipt",
-    "Notification",
-    "MessageType",
-    "ConversationType",
-    # Audit
-    "AuditLog",
-    "SystemLog",
-]
+# Provide minimal placeholders to avoid import errors when code expects these names
+User = SimpleNamespace
+Role = SimpleNamespace
+Permission = SimpleNamespace
+Course = SimpleNamespace
+Grade = SimpleNamespace
+Student = SimpleNamespace
+
+__all__ = ["User","Role","Permission","Course","Grade","Student"]

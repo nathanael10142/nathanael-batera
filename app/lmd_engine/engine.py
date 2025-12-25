@@ -1,99 +1,103 @@
 """
-Moteur de calcul LMD
+Moteur de calcul LMD adapté pour Firestore
 
-AUCUN CALCUL MANUEL AUTORISÉ - Tout est automatique
+Remplace les accès SQL par des requêtes Firestore. L'API publique reste la même
+(les identifiants d'étudiants/ids de documents sont traités comme des chaînes).
 """
 from typing import List, Dict, Any, Optional
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from firebase_admin import firestore
 
 from app.lmd_engine.rules import LMDRules
-from app.models.student import Student, AcademicRecord
-from app.models.course import Grade, Course, CourseEnrollment
-from app.models.university import Session as AcademicSession
 
 
 class LMDEngine:
     """
-    Moteur de calcul automatique des règles LMD
-    
-    Toutes les décisions académiques passent par ce moteur
+    Moteur de calcul automatique des règles LMD utilisant Firestore.
     """
-    
-    def __init__(self, db: AsyncSession, rules: Optional[LMDRules] = None):
-        self.db = db
+
+    def __init__(self, rules: Optional[LMDRules] = None):
+        self.db = firestore.client()
         self.rules = rules or LMDRules.get_default_rules()
-    
+
+    def _as_str(self, v) -> str:
+        return str(v) if v is not None else ""
+
+    def _fetch_course(self, course_id: Any) -> Optional[dict]:
+        if course_id is None:
+            return None
+        doc = self.db.collection("courses").document(self._as_str(course_id)).get()
+        return doc.to_dict() if doc.exists else None
+
+    def _fetch_academic_record_doc(self, student_id: Any, academic_year_id: Any) -> Optional[firestore.DocumentReference]:
+        # We assume academic_records collection stores documents keyed by an auto id and contains student_uid and academic_year_id
+        q = self.db.collection("academic_records").where("student_uid", "==", self._as_str(student_id)).where("academic_year_id", "==", academic_year_id).limit(1).stream()
+        docs = list(q)
+        return docs[0].reference if docs else None
+
+    def _fetch_grades(self, student_id: Any, academic_year_id: Any, session_id: Optional[Any] = None) -> List[dict]:
+        q = self.db.collection("grades").where("student_uid", "==", self._as_str(student_id)).where("academic_year_id", "==", academic_year_id)
+        if session_id is not None:
+            q = q.where("session_id", "==", session_id)
+        return [d.to_dict() | {"_id": d.id} for d in q.stream()]
+
+    def _update_grade(self, grade_doc_id: str, data: dict):
+        self.db.collection("grades").document(self._as_str(grade_doc_id)).update(data)
+
+    def _commit_batch(self, updates: List[tuple]):
+        # updates: list of (collection, doc_id, data)
+        batch = self.db.batch()
+        for coll, doc_id, data in updates:
+            ref = self.db.collection(coll).document(self._as_str(doc_id))
+            batch.update(ref, data)
+        batch.commit()
+
     async def calculate_student_credits(
         self,
-        student_id: int,
-        academic_year_id: int,
-        session_id: Optional[int] = None
+        student_id: Any,
+        academic_year_id: Any,
+        session_id: Optional[Any] = None
     ) -> Dict[str, Any]:
         """
-        Calculer les crédits d'un étudiant pour une année académique
-        
-        Returns:
-            {
-                "total_attempted": int,
-                "total_earned": int,
-                "total_in_debt": int,
-                "by_course": List[Dict],
-                "capitalized": int,
-                "compensated": int
-            }
+        Calculer les crédits d'un étudiant pour une année académique en lisant les documents Firestore.
         """
-        # Récupérer toutes les notes de l'étudiant pour cette année
-        query = select(Grade).where(
-            Grade.student_id == student_id,
-            Grade.academic_year_id == academic_year_id,
-            Grade.is_active == True
-        )
-        
-        if session_id:
-            query = query.where(Grade.session_id == session_id)
-        
-        result = await self.db.execute(query)
-        grades = result.scalars().all()
-        
+        grades = self._fetch_grades(student_id, academic_year_id, session_id)
+
         total_attempted = 0
         total_earned = 0
         total_in_debt = 0
         capitalized = 0
         compensated = 0
         by_course = []
-        
-        for grade in grades:
-            # Récupérer le cours pour les crédits
-            course_query = select(Course).where(Course.id == grade.course_id)
-            course_result = await self.db.execute(course_query)
-            course = course_result.scalar_one_or_none()
-            
+
+        for g in grades:
+            course = self._fetch_course(g.get("course_id"))
             if not course:
                 continue
-            
-            course_credits = course.credits
+
+            course_credits = int(course.get("credits", 0) or 0)
             total_attempted += course_credits
-            
-            # Déterminer si les crédits sont obtenus
-            if grade.is_passed or grade.is_capitalized or grade.is_compensated:
+
+            is_passed = bool(g.get("is_passed", False))
+            is_capitalized = bool(g.get("is_capitalized", False))
+            is_compensated = bool(g.get("is_compensated", False))
+
+            if is_passed or is_capitalized or is_compensated:
                 total_earned += course_credits
-                
-                if grade.is_capitalized:
+                if is_capitalized:
                     capitalized += course_credits
-                elif grade.is_compensated:
+                elif is_compensated:
                     compensated += course_credits
             else:
                 total_in_debt += course_credits
-            
+
             by_course.append({
-                "course_code": course.code,
-                "course_name": course.name,
+                "course_code": course.get("code"),
+                "course_name": course.get("name"),
                 "credits": course_credits,
-                "grade": grade.final_score,
-                "status": "earned" if (grade.is_passed or grade.is_capitalized or grade.is_compensated) else "debt"
+                "grade": g.get("final_score"),
+                "status": "earned" if (is_passed or is_capitalized or is_compensated) else "debt"
             })
-        
+
         return {
             "total_attempted": total_attempted,
             "total_earned": total_earned,
@@ -102,161 +106,101 @@ class LMDEngine:
             "capitalized": capitalized,
             "compensated": compensated
         }
-    
+
     async def apply_compensation(
         self,
-        student_id: int,
-        academic_year_id: int,
-        session_id: int
+        student_id: Any,
+        academic_year_id: Any,
+        session_id: Any
     ) -> Dict[str, Any]:
         """
-        Appliquer les règles de compensation
-        
-        La compensation permet de valider des UE avec note < 50 si :
-        - La moyenne générale >= seuil
-        - La note compensée >= note minimale compensable
-        - Nombre de crédits compensés <= maximum autorisé
+        Appliquer les règles de compensation en mettant à jour les documents grades dans Firestore.
         """
         if not self.rules.compensation_allowed:
             return {"compensated": [], "message": "Compensation not allowed"}
-        
-        # Récupérer toutes les notes
-        query = select(Grade).where(
-            Grade.student_id == student_id,
-            Grade.academic_year_id == academic_year_id,
-            Grade.session_id == session_id,
-            Grade.is_active == True
-        )
-        
-        result = await self.db.execute(query)
-        grades = result.scalars().all()
-        
+
+        grades = self._fetch_grades(student_id, academic_year_id, session_id)
         if not grades:
             return {"compensated": [], "message": "No grades found"}
-        
+
         # Calculer la moyenne générale
-        total_score = sum(g.final_score or 0 for g in grades if g.final_score is not None)
-        average = total_score / len(grades) if grades else 0
-        
-        # Vérifier si la moyenne permet la compensation
+        scores = [g.get("final_score") for g in grades if g.get("final_score") is not None]
+        total_score = sum(scores) if scores else 0
+        average = total_score / len(scores) if scores else 0
+
         if average < self.rules.compensation_min_average:
             return {"compensated": [], "message": f"Average {average:.2f} below minimum {self.rules.compensation_min_average}"}
-        
-        # Identifier les notes compensables
-        compensable_grades = []
-        for grade in grades:
-            if grade.final_score is not None and self.rules.is_compensable(grade.final_score):
-                # Récupérer les crédits du cours
-                course_query = select(Course).where(Course.id == grade.course_id)
-                course_result = await self.db.execute(course_query)
-                course = course_result.scalar_one_or_none()
-                
-                if course:
-                    compensable_grades.append({
-                        "grade": grade,
-                        "credits": course.credits,
-                        "score": grade.final_score
-                    })
-        
-        # Appliquer la compensation (maximum de crédits)
+
+        # Identifier notes compensables
+        compensable = []
+        for g in grades:
+            score = g.get("final_score")
+            if score is None:
+                continue
+            if self.rules.is_compensable(score):
+                course = self._fetch_course(g.get("course_id"))
+                if not course:
+                    continue
+                compensable.append({"grade_doc": g.get("_id"), "score": score, "credits": int(course.get("credits", 0) or 0)})
+
         compensated = []
-        total_compensated_credits = 0
-        
-        for item in sorted(compensable_grades, key=lambda x: x["score"], reverse=True):
-            if total_compensated_credits + item["credits"] <= self.rules.compensation_max_credits:
-                # Marquer comme compensé
-                grade = item["grade"]
-                grade.is_compensated = True
-                grade.is_passed = True
-                grade.credits_earned = item["credits"]
-                
-                compensated.append({
-                    "course_code": grade.course.code,
-                    "score": item["score"],
-                    "credits": item["credits"]
-                })
-                
-                total_compensated_credits += item["credits"]
-        
-        await self.db.commit()
-        
-        return {
-            "compensated": compensated,
-            "total_credits": total_compensated_credits,
-            "average": average
-        }
-    
+        total_comp_credits = 0
+        updates = []
+
+        for item in sorted(compensable, key=lambda x: x["score"], reverse=True):
+            if total_comp_credits + item["credits"] <= self.rules.compensation_max_credits:
+                # Mark grade document as compensated
+                updates.append(("grades", item["grade_doc"], {"is_compensated": True, "is_passed": True, "credits_earned": item["credits"]}))
+                compensated.append({"grade_doc": item["grade_doc"], "score": item["score"], "credits": item["credits"]})
+                total_comp_credits += item["credits"]
+
+        if updates:
+            self._commit_batch(updates)
+
+        return {"compensated": compensated, "total_credits": total_comp_credits, "average": average}
+
     async def calculate_gpa(
         self,
-        student_id: int,
-        academic_year_id: int,
-        session_id: Optional[int] = None
+        student_id: Any,
+        academic_year_id: Any,
+        session_id: Optional[Any] = None
     ) -> float:
-        """
-        Calculer la moyenne générale pondérée (GPA)
-        """
-        query = select(Grade).where(
-            Grade.student_id == student_id,
-            Grade.academic_year_id == academic_year_id,
-            Grade.is_active == True
-        )
-        
-        if session_id:
-            query = query.where(Grade.session_id == session_id)
-        
-        result = await self.db.execute(query)
-        grades = result.scalars().all()
-        
+        grades = self._fetch_grades(student_id, academic_year_id, session_id)
         if not grades:
             return 0.0
-        
+
         total_weighted_score = 0.0
         total_credits = 0
-        
-        for grade in grades:
-            if grade.final_score is not None:
-                # Récupérer les crédits du cours
-                course_query = select(Course).where(Course.id == grade.course_id)
-                course_result = await self.db.execute(course_query)
-                course = course_result.scalar_one_or_none()
-                
-                if course:
-                    total_weighted_score += grade.final_score * course.credits
-                    total_credits += course.credits
-        
-        return total_weighted_score / total_credits if total_credits > 0 else 0.0
-    
+
+        for g in grades:
+            score = g.get("final_score")
+            if score is None:
+                continue
+            course = self._fetch_course(g.get("course_id"))
+            if not course:
+                continue
+            credits = int(course.get("credits", 0) or 0)
+            total_weighted_score += score * credits
+            total_credits += credits
+
+        return (total_weighted_score / total_credits) if total_credits > 0 else 0.0
+
     async def make_academic_decision(
         self,
-        student_id: int,
-        academic_year_id: int
+        student_id: Any,
+        academic_year_id: Any
     ) -> Dict[str, Any]:
-        """
-        Prendre la décision académique automatique
-        
-        Décisions possibles :
-        - "admis": réussite complète
-        - "admis_conditionnel": réussite avec dettes
-        - "ajourné": échec, 2e session
-        - "redoublant": échec définitif
-        - "réorienté": échec après max redoublements
-        """
-        # Calculer les crédits
         credits = await self.calculate_student_credits(student_id, academic_year_id)
-        
         total_earned = credits["total_earned"]
         total_in_debt = credits["total_in_debt"]
-        
-        # Calculer la moyenne
+
         gpa = await self.calculate_gpa(student_id, academic_year_id)
-        
-        # Vérifier la progression
+
         can_progress, progression_status = self.rules.can_progress(total_earned, total_in_debt)
-        
-        # Déterminer la décision
+
         decision = None
         is_conditional = False
-        
+
         if can_progress:
             if progression_status == "normal":
                 decision = "admis"
@@ -264,30 +208,23 @@ class LMDEngine:
                 decision = "admis_conditionnel"
                 is_conditional = True
         else:
-            # Vérifier si 2e session possible
             if self.rules.second_session_enabled:
-                decision = "ajourné"  # Peut passer en 2e session
+                decision = "ajourné"
             else:
                 decision = "redoublant"
-        
-        # Mettre à jour le dossier académique
-        record_query = select(AcademicRecord).where(
-            AcademicRecord.student_id == student_id,
-            AcademicRecord.academic_year_id == academic_year_id
-        )
-        record_result = await self.db.execute(record_query)
-        record = record_result.scalar_one_or_none()
-        
-        if record:
-            record.total_credits_earned = total_earned
-            record.credits_in_debt = total_in_debt
-            record.gpa_final = gpa
-            record.decision = decision
-            record.is_conditional = is_conditional
-            record.can_progress = can_progress
-            
-            await self.db.commit()
-        
+
+        # Mettre à jour le dossier académique si présent
+        rec_ref = self._fetch_academic_record_doc(student_id, academic_year_id)
+        if rec_ref:
+            rec_ref.update({
+                "total_credits_earned": total_earned,
+                "credits_in_debt": total_in_debt,
+                "gpa_final": gpa,
+                "decision": decision,
+                "is_conditional": is_conditional,
+                "can_progress": can_progress
+            })
+
         return {
             "decision": decision,
             "is_conditional": is_conditional,
@@ -297,52 +234,32 @@ class LMDEngine:
             "gpa": gpa,
             "progression_status": progression_status
         }
-    
+
     async def check_prerequisites(
         self,
-        student_id: int,
-        course_id: int
+        student_id: Any,
+        course_id: Any
     ) -> Dict[str, Any]:
-        """
-        Vérifier si un étudiant a validé les prérequis d'un cours
-        """
-        # Récupérer le cours
-        course_query = select(Course).where(Course.id == course_id)
-        course_result = await self.db.execute(course_query)
-        course = course_result.scalar_one_or_none()
-        
-        if not course or not course.prerequisites:
+        course = self._fetch_course(course_id)
+        if not course or not course.get("prerequisites"):
             return {"has_prerequisites": True, "missing": []}
-        
-        prerequisite_codes = course.prerequisites
+
+        prerequisite_codes = course.get("prerequisites")
         missing = []
-        
-        # Vérifier chaque prérequis
+
         for prereq_code in prerequisite_codes:
-            # Trouver le cours prérequis
-            prereq_query = select(Course).where(Course.code == prereq_code)
-            prereq_result = await self.db.execute(prereq_query)
-            prereq_course = prereq_result.scalar_one_or_none()
-            
-            if not prereq_course:
+            # Find prereq course by code
+            q = self.db.collection("courses").where("code", "==", prereq_code).limit(1).stream()
+            prereq_docs = list(q)
+            if not prereq_docs:
                 continue
-            
-            # Vérifier si l'étudiant a validé ce cours
-            grade_query = select(Grade).where(
-                Grade.student_id == student_id,
-                Grade.course_id == prereq_course.id,
-                Grade.is_passed == True
-            )
-            grade_result = await self.db.execute(grade_query)
-            grade = grade_result.scalar_one_or_none()
-            
-            if not grade:
-                missing.append({
-                    "code": prereq_code,
-                    "name": prereq_course.name
-                })
-        
-        return {
-            "has_prerequisites": len(missing) == 0,
-            "missing": missing
-        }
+            prereq_course = prereq_docs[0].to_dict()
+            prereq_id = prereq_docs[0].id
+
+            # Check if student has a passing grade for this prereq
+            qg = self.db.collection("grades").where("student_uid", "==", self._as_str(student_id)).where("course_id", "==", prereq_id).where("is_passed", "==", True).limit(1).stream()
+            passed = any(True for _ in qg)
+            if not passed:
+                missing.append({"code": prereq_code, "name": prereq_course.get("name")})
+
+        return {"has_prerequisites": len(missing) == 0, "missing": missing}

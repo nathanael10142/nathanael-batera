@@ -12,11 +12,10 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# In Firestore-only deployments, we don't have SQL metadata for Alembic.
-# Set target_metadata to None so alembic autogenerate doesn't attempt to use it.
+# Attempt to import SQLAlchemy Base; if not present (Firestore-only), set None
 try:
-    from database import Base
-    target_metadata = Base.metadata if Base is not None else None
+    from app.models.base import Base
+    target_metadata = Base.metadata
 except Exception:
     target_metadata = None
 
