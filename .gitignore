@@ -1,0 +1,33 @@
+# Fichiers de cache et de compilation Python
+__pycache__/
+*.py[cod]
+
+# Environnements virtuels
+venv/
+env/
+.venv/
+*.venv
+
+# Fichiers de configuration des éditeurs
+.vscode/
+.idea/
+
+# Fichiers de base de données locaux
+*.sqlite3
+db.sqlite3
+
+# Fichiers de variables d'environnement (TRÈS IMPORTANT)
+.env*
+*.env
+
+# Fichiers de logs
+*.log
+
+# Dossiers de build et de distribution
+/dist/
+/build/
+*.egg-info/
+
+# Fichiers de test
+.pytest_cache/
+.coverage
