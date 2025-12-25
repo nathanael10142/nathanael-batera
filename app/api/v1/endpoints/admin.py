@@ -6,9 +6,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from app.core.security import get_current_active_user, check_permission, Permissions
-from database import get_session
-from models import CycleType, Faculte, Departement, OptionFiliere, Utilisateur
+# Imports corrigés avec des chemins absolus
+from app.core.security import get_current_active_user, require_permission, Permissions
+from app.db.session import get_session
+from app.models import Faculty, Department, Option, User
 
 router = APIRouter()
 
@@ -19,7 +20,7 @@ async def duplicate_faculty(
     new_faculty_name: str,
     new_faculty_code: str,
     db: AsyncSession = Depends(get_session),
-    current_user: Utilisateur = Depends(get_current_active_user)
+    current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))
 ) -> Any:
     """
     FONCTION CLÉ : Dupliquer une faculté modèle
@@ -28,11 +29,10 @@ async def duplicate_faculty(
     en dupliquant la faculté modèle avec toute sa structure.
     """
     # Vérifier les permissions
-    if not check_permission(current_user, Permissions.ADMIN_CREATE_FACULTY):
-        raise HTTPException(status_code=403, detail="Permission refusée")
+    # La vérification est maintenant gérée par le décorateur `require_permission`
     
     # Récupérer la faculté template
-    query = select(Faculte).where(Faculte.id == template_faculty_id)
+    query = select(Faculty).where(Faculty.id == template_faculty_id)
     result = await db.execute(query)
     template = result.scalar_one_or_none()
     
@@ -40,25 +40,25 @@ async def duplicate_faculty(
         raise HTTPException(status_code=404, detail="Faculté template introuvable")
     
     # Créer la nouvelle faculté
-    new_faculty = Faculte(
-        universite_id=template.universite_id,
-        nom=new_faculty_name,
+    new_faculty = Faculty(
+        university_id=template.university_id,
+        name=new_faculty_name,
         code=new_faculty_code
     )
     db.add(new_faculty)
     await db.flush()  # Pour obtenir l'ID
     
     # Dupliquer les départements
-    dept_query = select(Departement).where(Departement.faculte_id == template_faculty_id)
+    dept_query = select(Department).where(Department.faculty_id == template_faculty_id)
     dept_result = await db.execute(dept_query)
     template_departments = dept_result.scalars().all()
     
     department_map = {}  # Mapping ancien ID -> nouveau département
     
     for template_dept in template_departments:
-        new_dept = Departement(
-            faculte_id=new_faculty.id,
-            nom=template_dept.nom,
+        new_dept = Department(
+            faculty_id=new_faculty.id,
+            name=template_dept.name,
             code=template_dept.code
         )
         db.add(new_dept)
@@ -66,16 +66,15 @@ async def duplicate_faculty(
         department_map[template_dept.id] = new_dept
         
         # Dupliquer les options de ce département
-        option_query = select(OptionFiliere).where(OptionFiliere.departement_id == template_dept.id)
+        option_query = select(Option).where(Option.department_id == template_dept.id)
         option_result = await db.execute(option_query)
         template_options = option_result.scalars().all()
         
         for template_option in template_options:
-            new_option = OptionFiliere(
-                departement_id=new_dept.id,
-                nom=template_option.nom,
-                code=template_option.code,
-                cycle=template_option.cycle
+            new_option = Option(
+                department_id=new_dept.id,
+                name=template_option.name,
+                code=template_option.code
             )
             db.add(new_option)
     
@@ -84,7 +83,7 @@ async def duplicate_faculty(
     return {
         "message": "Faculté dupliquée avec succès",
         "faculty_id": new_faculty.id,
-        "faculty_name": new_faculty.nom,
+        "faculty_name": new_faculty.name,
         "departments_created": len(department_map)
     }
 
@@ -95,17 +94,14 @@ async def create_faculty_from_scratch(
     name: str,
     code: str,
     db: AsyncSession = Depends(get_session),
-    current_user: Utilisateur = Depends(get_current_active_user)
+    current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))
 ) -> Any:
     """
     Créer une faculté vierge (sans structure)
     """
-    if not check_permission(current_user, Permissions.ADMIN_CREATE_FACULTY):
-        raise HTTPException(status_code=403, detail="Permission refusée")
-    
-    faculty = Faculte(
-        universite_id=university_id,
-        nom=name,
+    faculty = Faculty(
+        university_id=university_id,
+        name=name,
         code=code
     )
     db.add(faculty)
@@ -115,22 +111,22 @@ async def create_faculty_from_scratch(
     return {
         "message": "Faculté créée",
         "faculty_id": faculty.id,
-        "faculty_name": faculty.nom
+        "faculty_name": faculty.name
     }
 
 
 @router.get("/faculties")
 async def list_all_faculties(
     db: AsyncSession = Depends(get_session),
-    current_user: Utilisateur = Depends(get_current_active_user)
+    current_user: User = Depends(get_current_active_user)
 ) -> Any:
     """
     Lister toutes les facultés (pour admin)
     """
-    if not (current_user.role and current_user.role.nom == "Admin"):
+    if not (current_user.role and current_user.role.name == "admin"):
         raise HTTPException(status_code=403, detail="Permission refusée")
     
-    query = select(Faculte)
+    query = select(Faculty)
     result = await db.execute(query)
     faculties = result.scalars().all()
     
@@ -139,7 +135,7 @@ async def list_all_faculties(
         "faculties": [
             {
                 "id": f.id,
-                "name": f.nom,
+                "name": f.name,
                 "code": f.code
             }
             for f in faculties
@@ -151,22 +147,20 @@ async def list_all_faculties(
 async def deactivate_faculty(
     faculty_id: int,
     db: AsyncSession = Depends(get_session),
-    current_user: Utilisateur = Depends(get_current_active_user)
+    current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))
 ) -> Any:
     """
     Désactiver une faculté (soft delete)
     """
-    if not check_permission(current_user, Permissions.ADMIN_CREATE_FACULTY):
-        raise HTTPException(status_code=403, detail="Permission refusée")
-    
-    query = select(Faculte).where(Faculte.id == faculty_id)
+    query = select(Faculty).where(Faculty.id == faculty_id)
     result = await db.execute(query)
     faculty = result.scalar_one_or_none()
     
     if not faculty:
         raise HTTPException(status_code=404, detail="Faculté introuvable")
     
-    # faculty.is_active = False # Le champ is_active n'existe plus dans le nouveau modèle
+    faculty.is_active = False
+    faculty.is_deleted = True
     await db.commit()
     
     return {"message": "Faculté désactivée"}
