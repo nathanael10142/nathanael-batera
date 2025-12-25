@@ -3,13 +3,11 @@ Routes d'administration (création facultés, etc.)
 """
 from typing import Any, List
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from firebase_admin import firestore
 
 # Imports corrigés avec des chemins absolus
 from app.core.security import get_current_active_user, require_permission, Permissions
-from app.db.session import get_session
-from app.models import Faculty, Department, Option, User
+from app.models import User # Faculty, Department, Option sont maintenant gérés via Firestore
 
 router = APIRouter()
 
@@ -19,72 +17,58 @@ async def duplicate_faculty(
     template_faculty_id: int,
     new_faculty_name: str,
     new_faculty_code: str,
-    db: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))
 ) -> Any:
     """
     FONCTION CLÉ : Dupliquer une faculté modèle
-    
-    Cette fonction permet à l'admin de créer 100+ facultés automatiquement
-    en dupliquant la faculté modèle avec toute sa structure.
     """
-    # Vérifier les permissions
-    # La vérification est maintenant gérée par le décorateur `require_permission`
-    
-    # Récupérer la faculté template
-    query = select(Faculty).where(Faculty.id == template_faculty_id)
-    result = await db.execute(query)
-    template = result.scalar_one_or_none()
-    
-    if not template:
+    db = firestore.client()
+    template_faculty_ref = db.collection("faculties").document(str(template_faculty_id))
+    template_faculty = template_faculty_ref.get()
+
+    if not template_faculty.exists:
         raise HTTPException(status_code=404, detail="Faculté template introuvable")
-    
+
+    template_data = template_faculty.to_dict()
+
     # Créer la nouvelle faculté
-    new_faculty = Faculty(
-        university_id=template.university_id,
-        name=new_faculty_name,
-        code=new_faculty_code
-    )
-    db.add(new_faculty)
-    await db.flush()  # Pour obtenir l'ID
-    
-    # Dupliquer les départements
-    dept_query = select(Department).where(Department.faculty_id == template_faculty_id)
-    dept_result = await db.execute(dept_query)
-    template_departments = dept_result.scalars().all()
-    
-    department_map = {}  # Mapping ancien ID -> nouveau département
-    
-    for template_dept in template_departments:
-        new_dept = Department(
-            faculty_id=new_faculty.id,
-            name=template_dept.name,
-            code=template_dept.code
-        )
-        db.add(new_dept)
-        await db.flush()
-        department_map[template_dept.id] = new_dept
-        
-        # Dupliquer les options de ce département
-        option_query = select(Option).where(Option.department_id == template_dept.id)
-        option_result = await db.execute(option_query)
-        template_options = option_result.scalars().all()
-        
-        for template_option in template_options:
-            new_option = Option(
-                department_id=new_dept.id,
-                name=template_option.name,
-                code=template_option.code
-            )
-            db.add(new_option)
-    
-    await db.commit()
-    
+    new_faculty_ref = db.collection("faculties").document()
+    new_faculty_data = {
+        "university_id": template_data.get("university_id"),
+        "name": new_faculty_name,
+        "code": new_faculty_code,
+        "is_active": True,
+        "is_deleted": False
+    }
+    new_faculty_ref.set(new_faculty_data)
+
+    # Dupliquer les sous-collections (départements et options)
+    template_departments = template_faculty_ref.collection("departments").stream()
+    departments_created_count = 0
+
+    for dept in template_departments:
+        dept_data = dept.to_dict()
+        new_dept_ref = new_faculty_ref.collection("departments").document()
+        new_dept_ref.set({
+            "name": dept_data.get("name"),
+            "code": dept_data.get("code")
+        })
+        departments_created_count += 1
+
+        template_options = dept.reference.collection("options").stream()
+        for opt in template_options:
+            opt_data = opt.to_dict()
+            new_opt_ref = new_dept_ref.collection("options").document()
+            new_opt_ref.set({
+                "name": opt_data.get("name"),
+                "code": opt_data.get("code")
+            })
+
     return {
         "message": "Faculté dupliquée avec succès",
-        "faculty_id": new_faculty.id,
-        "faculty_name": new_faculty.name,
-        "departments_created": len(department_map)
+        "faculty_id": new_faculty_ref.id,
+        "faculty_name": new_faculty_name,
+        "departments_created": departments_created_count
     }
 
 
@@ -93,31 +77,31 @@ async def create_faculty_from_scratch(
     university_id: int,
     name: str,
     code: str,
-    db: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))
 ) -> Any:
     """
     Créer une faculté vierge (sans structure)
     """
-    faculty = Faculty(
-        university_id=university_id,
-        name=name,
-        code=code
-    )
-    db.add(faculty)
-    await db.commit()
-    await db.refresh(faculty)
-    
+    db = firestore.client()
+    faculty_ref = db.collection("faculties").document()
+    faculty_data = {
+        "university_id": university_id,
+        "name": name,
+        "code": code,
+        "is_active": True,
+        "is_deleted": False
+    }
+    faculty_ref.set(faculty_data)
+
     return {
         "message": "Faculté créée",
-        "faculty_id": faculty.id,
-        "faculty_name": faculty.name
+        "faculty_id": faculty_ref.id,
+        "faculty_name": name
     }
 
 
 @router.get("/faculties")
 async def list_all_faculties(
-    db: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_active_user)
 ) -> Any:
     """
@@ -125,42 +109,40 @@ async def list_all_faculties(
     """
     if not (current_user.role and current_user.role.name == "admin"):
         raise HTTPException(status_code=403, detail="Permission refusée")
-    
-    query = select(Faculty)
-    result = await db.execute(query)
-    faculties = result.scalars().all()
-    
+
+    db = firestore.client()
+    faculties_stream = db.collection("faculties").where("is_deleted", "==", False).stream()
+
+    faculties_list = []
+    for f in faculties_stream:
+        faculty_data = f.to_dict()
+        faculties_list.append({
+            "id": f.id,
+            "name": faculty_data.get("name"),
+            "code": faculty_data.get("code")
+        })
+
     return {
-        "total": len(faculties),
-        "faculties": [
-            {
-                "id": f.id,
-                "name": f.name,
-                "code": f.code
-            }
-            for f in faculties
-        ]
+        "total": len(faculties_list),
+        "faculties": faculties_list
     }
 
 
 @router.delete("/faculties/{faculty_id}")
 async def deactivate_faculty(
     faculty_id: int,
-    db: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))
 ) -> Any:
     """
     Désactiver une faculté (soft delete)
     """
-    query = select(Faculty).where(Faculty.id == faculty_id)
-    result = await db.execute(query)
-    faculty = result.scalar_one_or_none()
-    
-    if not faculty:
+    db = firestore.client()
+    faculty_ref = db.collection("faculties").document(str(faculty_id))
+    faculty = faculty_ref.get()
+
+    if not faculty.exists:
         raise HTTPException(status_code=404, detail="Faculté introuvable")
-    
-    faculty.is_active = False
-    faculty.is_deleted = True
-    await db.commit()
-    
+
+    faculty_ref.update({"is_active": False, "is_deleted": True})
+
     return {"message": "Faculté désactivée"}
