@@ -10,7 +10,7 @@ import time
 
 # ✅ IMPORTS CORRIGÉS (IMPORTANT)
 from app.core.config import settings
-from app.core.firebase import initialize_firebase # 👈 AJOUT: Importer l'initialiseur
+from app.core.firebase_connector import initialize_firebase # 👈 CORRECTION: Importer depuis le bon fichier
 from app.api.v1.endpoints import (
     auth, admin, users, students, faculties, courses, grades, finances, messages
 )
