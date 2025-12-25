@@ -20,9 +20,6 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
 
-    # Redis
-    REDIS_URL: str
-
     # CORS (List[str] pour accepter '*' et URLs réelles)
     BACKEND_CORS_ORIGINS: List[str] = []
 
@@ -54,14 +51,8 @@ class Settings(BaseSettings):
     LMD_MAX_DEBT_CREDITS: int = 12
 
     # Celery (utilise la même URL que Redis par défaut)
-    CELERY_BROKER_URL: Optional[str] = None
-    CELERY_RESULT_BACKEND: Optional[str] = None
-
-    @validator("CELERY_BROKER_URL", "CELERY_RESULT_BACKEND", pre=True)
-    def assemble_celery_url(cls, v: Optional[str], values: dict) -> Any:
-        if isinstance(v, str):
-            return v
-        return values.get("REDIS_URL")
+    CELERY_BROKER_URL: Optional[str] = None # You will need to set this if you use Celery
+    CELERY_RESULT_BACKEND: Optional[str] = None # You will need to set this if you use Celery
 
     # Logging
     LOG_LEVEL: str = "INFO"
