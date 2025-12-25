@@ -1,70 +1,30 @@
-"""
-Configuration centrale de l'application
-"""
-from typing import List, Optional, Any
-from pydantic_settings import BaseSettings
-from pydantic import validator, PostgresDsn
-import os
+from pydantic import PostgresDsn, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from typing import Optional, Dict, Any
+
 
 class Settings(BaseSettings):
-    """Configuration de l'application"""
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=True)
 
-    # Application
-    APP_NAME: str = "University Management System"
-    APP_VERSION: str = "1.0.0"
-    DEBUG: bool = True
-    API_V1_STR: str = "/api/v1"
+    # Database connection
+    POSTGRES_SERVER: str
+    POSTGRES_USER: str
+    POSTGRES_PASSWORD: str
+    POSTGRES_DB: str
+    DATABASE_URL: Optional[PostgresDsn] = None
 
-    # Security
-    SECRET_KEY: str = "votre_cle_secrete_a_changer_en_production"
-    ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
-
-    # Firebase
-    FIREBASE_CREDENTIALS_JSON: str
-
-    # CORS (List[str] pour accepter '*' et URLs réelles)
-    BACKEND_CORS_ORIGINS: List[str] = []
-
-    @validator("BACKEND_CORS_ORIGINS", pre=True)
-    def assemble_cors_origins(cls, v: str | List[str]) -> List[str] | str:
-        if isinstance(v, str) and not v.startswith("["):
-            return [i.strip() for i in v.split(",")]
-        elif isinstance(v, (list, str)):
+    @field_validator("DATABASE_URL", mode="before")
+    @classmethod
+    def assemble_db_connection(cls, v: Optional[str], values: Dict[str, Any]) -> Any:
+        if isinstance(v, str):
             return v
-        raise ValueError(v)
-
-    # Email
-    MAIL_USERNAME: Optional[str] = None
-    MAIL_PASSWORD: Optional[str] = None
-    MAIL_FROM: str = "noreply@university.edu"
-    MAIL_PORT: int = 587
-    MAIL_SERVER: str = "smtp.gmail.com"
-    MAIL_TLS: bool = True
-    MAIL_SSL: bool = False
-
-    # File Storage
-    UPLOAD_DIR: str = "./uploads"
-    MAX_UPLOAD_SIZE: int = 10485760  # 10MB
-
-    # LMD Engine Settings
-    LMD_CREDITS_PER_YEAR: int = 60
-    LMD_PASSING_THRESHOLD: float = 50.0
-    LMD_COMPENSATION_ALLOWED: bool = True
-    LMD_MAX_DEBT_CREDITS: int = 12
-
-    # Celery (utilise la même URL que Redis par défaut)
-    CELERY_BROKER_URL: Optional[str] = None # You will need to set this if you use Celery
-    CELERY_RESULT_BACKEND: Optional[str] = None # You will need to set this if you use Celery
-
-    # Logging
-    LOG_LEVEL: str = "INFO"
-
-    class Config:
-        env_file = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env")
-        case_sensitive = True
-        extra = "ignore"  # Ignore les variables non déclarées dans le .env
+        return PostgresDsn.build(
+            scheme="postgresql+asyncpg",
+            username=values.get("POSTGRES_USER"),
+            password=values.get("POSTGRES_PASSWORD"),
+            host=values.get("POSTGRES_SERVER"),
+            path=f"/{values.get('POSTGRES_DB') or ''}",
+        )
 
 
-# Instance unique pour l'application
 settings = Settings()
