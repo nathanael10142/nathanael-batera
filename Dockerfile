@@ -13,8 +13,10 @@ WORKDIR /app
 COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 # Copier le code de l'application
 COPY . .
-EXPOSE 8000
+# Copier et rendre le script de démarrage exécutable
+COPY ./start.sh /start.sh
+RUN chmod +x /start.sh
 
 # Commande pour lancer l'application en production
-# On enlève --reload qui n'est utile qu'en développement
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Le port sera géré par la variable d'environnement PORT
+CMD ["/start.sh"]
