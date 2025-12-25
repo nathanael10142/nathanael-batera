@@ -3,8 +3,10 @@ from fastapi.security import OAuth2PasswordRequestForm
 from firebase_admin import auth
 from pydantic import BaseModel
 
-from app.core.security import create_access_token, get_current_active_user
-from app.models.user import User
+from app.core.security import create_access_token, get_current_active_user # security depends on the SQLAlchemy model
+from app.models.user import User as DBUser # Rename the SQLAlchemy model to avoid conflict
+from app.schemas.user_firebase import User as UserSchema # Import the Pydantic schema
+
 
 router = APIRouter()
 
@@ -49,8 +51,8 @@ async def login_with_firebase(
             detail=f"An error occurred during authentication: {e}",
         )
 
-@router.get("/me", response_model=User)
-def read_users_me(current_user: User = Depends(get_current_active_user)):
+@router.get("/me", response_model=UserSchema)
+def read_users_me(current_user: DBUser = Depends(get_current_active_user)):
     """
     Get current user.
     """

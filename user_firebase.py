@@ -12,7 +12,7 @@ class UserBase(BaseModel):
     is_active: bool = True
 
     class Config:
-        from_attributes = True # Permet de mapper depuis des objets
+        from_attributes = True # Permet de mapper depuis des objets (anciennement orm_mode)
 
 # Schéma pour la création d'un utilisateur.
 # Il inclut le mot de passe qui sera traité par Firebase Auth.
