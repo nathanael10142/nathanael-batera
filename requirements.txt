@@ -3,7 +3,5 @@ uvicorn[standard]
 firebase-admin
 pydantic-settings
 python-dotenv
-sqlalchemy
-asyncpg
 python-jose[cryptography]
-pydantic[email] # This ensures email-validator is installed
+pydantic[email]
