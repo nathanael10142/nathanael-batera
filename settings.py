@@ -11,16 +11,9 @@ class Settings(BaseSettings):
     API_V1_STR: str = "/api/v1"
     SECRET_KEY: str = "votre_cle_secrete"
     
-    # Base de données
-    # Cette variable doit correspondre au nom EXACT dans votre .env
-    DATABASE_URL: str = "sqlite+aiosqlite:///./test.db" 
-    DATABASE_URL_SYNC: str = ""
-
-    # Variables pour Docker Compose (lues depuis .env)
-    POSTGRES_USER: str = "postgres"
-    POSTGRES_PASSWORD: str = "postgres"
-    POSTGRES_DB: str = "university_db"
-    
+    # Firebase (la variable d'environnement sera lue directement par le code)
+    # Pas besoin de la déclarer ici si on utilise os.getenv()
+   
     # Redis & Celery
     REDIS_URL: str = "redis://localhost:6379/0"
     CELERY_BROKER_URL: str = "redis://localhost:6379/0"

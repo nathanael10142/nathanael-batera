@@ -1,22 +1,4 @@
 services:
-  postgres:
-    image: postgres:15-alpine
-    container_name: university_postgres
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d university_db"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
   redis:
     image: redis:7-alpine
     container_name: university_redis
@@ -25,6 +7,11 @@ services:
     volumes:
       - redis_data:/data
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
 
   backend:
     build:
@@ -37,16 +24,13 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - DATABASE_URL=${DATABASE_URL}
-      - DATABASE_URL_SYNC=${DATABASE_URL_SYNC}
+      # 👇 La variable la plus importante : elle contiendra le JSON de vos identifiants Firebase
+      - FIREBASE_CREDENTIALS_JSON=${FIREBASE_CREDENTIALS_JSON}
       - REDIS_URL=${REDIS_URL}
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
-        condition: service_started # Redis démarre très vite, pas besoin de healthcheck complexe
+        condition: service_healthy # On attend que Redis soit prêt
     restart: unless-stopped
 
 volumes:
-  postgres_data:
   redis_data:

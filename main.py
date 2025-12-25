@@ -1,10 +1,12 @@
 from fastapi import FastAPI, Depends, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
 
 from app.core.config import settings
 from app.api.v1.endpoints import (
     auth, admin, users, students, faculties, courses, grades, finances, messages
 )
+from app.core.firebase_connector import initialize_firebase
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -45,3 +47,11 @@ api_router.include_router(finances.router, prefix="/finances", tags=["Finances &
 api_router.include_router(messages.router, prefix="/messages", tags=["Messaging"])
 
 app.include_router(api_router, prefix=settings.API_V1_STR)
+
+# --- Initialisation au démarrage ---
+@app.on_event("startup")
+def startup_event():
+    """
+    Actions à exécuter au démarrage de l'application.
+    """
+    initialize_firebase()
