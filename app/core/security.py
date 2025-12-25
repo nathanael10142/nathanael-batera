@@ -7,7 +7,7 @@ from jose import JWTError, jwt as jose_jwt
 from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from firebase_admin import auth
+from firebase_admin import auth, firestore # 👈 Importer firestore
 from app.core.config import settings
 # On importe le modèle de la base de données pour pouvoir le peupler
 # avec les informations de Firebase et de notre propre base de données.
@@ -68,18 +68,23 @@ async def get_current_user(
     # en utilisant l'UID de Firebase comme identifiant.
     # Cela nous donne accès à ses rôles et permissions définis dans notre système.
     try:
-        # NOTE: Cette partie suppose que vous avez une fonction pour récupérer un utilisateur
-        # par son ID (qui serait le firebase_uid). Par exemple, `user_crud.get(id=firebase_uid)`.
-        # Pour l'exemple, je vais simuler la création d'un objet User.
-        # Dans une vraie application, vous le chargeriez depuis votre base de données.
-        
         # Étape 1: Vérifier que l'utilisateur existe toujours dans Firebase
         firebase_user_record = auth.get_user(firebase_uid)
 
-        # Étape 2: Charger l'utilisateur depuis votre base de données (à implémenter)
-        # user = await crud.user.get(db, id=firebase_uid)
-        # En attendant, on simule un utilisateur pour que la logique fonctionne
-        user = User(id=firebase_user_record.uid, email=firebase_user_record.email, username=firebase_user_record.display_name, is_active=not firebase_user_record.disabled)
+        # Étape 2: Charger les détails de l'utilisateur depuis Firestore
+        db = firestore.client()
+        user_doc_ref = db.collection('users').document(firebase_uid)
+        user_doc = user_doc_ref.get()
+
+        if not user_doc.exists:
+            # Si l'utilisateur existe dans Firebase Auth mais pas dans notre base de données Firestore,
+            # c'est une erreur de synchronisation.
+            raise credentials_exception
+
+        user_data = user_doc.to_dict()
+        # On combine les données de Firestore et de Firebase Auth pour créer notre objet User
+        user = User(id=firebase_user_record.uid, email=firebase_user_record.email, is_active=not firebase_user_record.disabled, **user_data)
+
     except auth.UserNotFoundError: # L'utilisateur a été supprimé de Firebase
         raise credentials_exception
     

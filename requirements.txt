@@ -3,5 +3,3 @@ uvicorn[standard]
 firebase-admin
 pydantic-settings
 python-dotenv
-redis
-aioredis

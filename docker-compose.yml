@@ -1,18 +1,4 @@
 services:
-  redis:
-    image: redis:7-alpine
-    container_name: university_redis
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 1s
-      timeout: 3s
-      retries: 30
-
   backend:
     build:
       context: .
@@ -24,13 +10,5 @@ services:
     ports:
       - "8000:8000"
     environment:
-      # 👇 La variable la plus importante : elle contiendra le JSON de vos identifiants Firebase
       - FIREBASE_CREDENTIALS_JSON=${FIREBASE_CREDENTIALS_JSON}
-      - REDIS_URL=${REDIS_URL}
-    depends_on:
-      redis:
-        condition: service_healthy # On attend que Redis soit prêt
     restart: unless-stopped
-
-volumes:
-  redis_data:
