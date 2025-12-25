@@ -1,7 +1,7 @@
 """
 Modèles : Utilisateurs, rôles et permissions
 """
-from sqlalchemy import Column, String, Integer, ForeignKey, Boolean, Table
+from sqlalchemy import Column, String, Integer, ForeignKey, Boolean, Table, Text
 from sqlalchemy.orm import relationship
 
 from app.models.base import BaseModel

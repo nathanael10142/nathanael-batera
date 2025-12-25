@@ -1,7 +1,7 @@
 """
 Modèles : Cours (UE) et gestion académique
 """
-from sqlalchemy import Column, String, Integer, ForeignKey, Float, Text, JSON, Boolean, Enum as SQLEnum
+from sqlalchemy import Column, String, Integer, ForeignKey, Float, Text, JSON, Boolean, Enum as SQLEnum, DateTime
 from sqlalchemy.orm import relationship
 import enum
 

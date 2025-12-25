@@ -1,7 +1,7 @@
 """
 Modèles : Gestion financière et comptabilité
 """
-from sqlalchemy import Column, String, Integer, ForeignKey, Float, Text, JSON, Enum as SQLEnum, DateTime
+from sqlalchemy import Column, String, Integer, ForeignKey, Float, Text, JSON, Enum as SQLEnum, DateTime, Boolean
 from sqlalchemy.orm import relationship
 import enum
 from datetime import datetime
