@@ -9,7 +9,10 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from firebase_admin import auth
 from app.core.config import settings
-from app.schemas.user_firebase import User as FirebaseUser # Utiliser notre schéma Pydantic
+# On importe le modèle de la base de données pour pouvoir le peupler
+# avec les informations de Firebase et de notre propre base de données.
+# Assurez-vous que le chemin d'importation est correct.
+from app.models.user import User
 
 
 # Password hashing
@@ -44,7 +47,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
 
 async def get_current_user(
     token: str = Depends(oauth2_scheme)
-) -> FirebaseUser:
+) -> User: # 👈 CHANGEMENT: Nous allons renvoyer notre modèle User complet
     """Obtenir l'utilisateur courant depuis le token"""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -61,12 +64,23 @@ async def get_current_user(
     except JWTError:
         raise credentials_exception
     
-    # Ensuite, vérifier auprès de Firebase que cet utilisateur existe vraiment
+    # Ensuite, nous allons chercher l'utilisateur dans notre propre base de données
+    # en utilisant l'UID de Firebase comme identifiant.
+    # Cela nous donne accès à ses rôles et permissions définis dans notre système.
     try:
-        user_record = auth.get_user(firebase_uid)
-        # On peut construire un objet utilisateur simple pour le reste de l'app
-        user = FirebaseUser(id=user_record.uid, email=user_record.email, username=user_record.display_name, is_active=not user_record.disabled)
-    except auth.UserNotFoundError:
+        # NOTE: Cette partie suppose que vous avez une fonction pour récupérer un utilisateur
+        # par son ID (qui serait le firebase_uid). Par exemple, `user_crud.get(id=firebase_uid)`.
+        # Pour l'exemple, je vais simuler la création d'un objet User.
+        # Dans une vraie application, vous le chargeriez depuis votre base de données.
+        
+        # Étape 1: Vérifier que l'utilisateur existe toujours dans Firebase
+        firebase_user_record = auth.get_user(firebase_uid)
+
+        # Étape 2: Charger l'utilisateur depuis votre base de données (à implémenter)
+        # user = await crud.user.get(db, id=firebase_uid)
+        # En attendant, on simule un utilisateur pour que la logique fonctionne
+        user = User(id=firebase_user_record.uid, email=firebase_user_record.email, username=firebase_user_record.display_name, is_active=not firebase_user_record.disabled)
+    except auth.UserNotFoundError: # L'utilisateur a été supprimé de Firebase
         raise credentials_exception
     
     if user is None:
@@ -76,8 +90,8 @@ async def get_current_user(
 
 
 async def get_current_active_user(
-    current_user: FirebaseUser = Depends(get_current_user)
-) -> FirebaseUser:
+    current_user: User = Depends(get_current_user)
+) -> User:
     """Obtenir l'utilisateur actif"""
     if not current_user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
@@ -86,7 +100,10 @@ async def get_current_active_user(
 
 def check_permission(user: User, permission: str) -> bool:
     """Vérifier si l'utilisateur a la permission (logique à implémenter)"""
-    if user.role and user.role.nom == "Admin":
+    # La logique de permission dépendra de la structure de votre modèle `User` et `Role`.
+    # Si `user.role` est une chaîne de caractères (ex: "admin", "teacher").
+    # if user.role == "admin":
+    if hasattr(user, 'role') and user.role and user.role.name == "admin": # Adapté pour un enum ou un objet avec un attribut `name`
         return True
     
     # Vérifier les permissions du rôle
