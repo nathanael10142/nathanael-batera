@@ -17,4 +17,4 @@ EXPOSE 8000
 
 # Commande pour lancer l'application en production
 # On enlève --reload qui n'est utile qu'en développement
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
