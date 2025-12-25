@@ -3,3 +3,5 @@ uvicorn[standard]
 firebase-admin
 pydantic-settings
 python-dotenv
+sqlalchemy
+asyncpg
