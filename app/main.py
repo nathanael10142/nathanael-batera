@@ -7,6 +7,8 @@ from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from contextlib import asynccontextmanager
 import time
+import json
+from urllib.parse import urlparse
 
 # ✅ IMPORTS CORRIGÉS (IMPORTANT)
 from app.core.config import settings
@@ -44,19 +46,67 @@ app = FastAPI(
     redoc_url="/api/redoc" if settings.DEBUG else None,
 )
 
-# --- Configuration CORS ---
-if settings.DEBUG:
-    # 🔥 Pour le débogage, autorise TOUT
-    origins_to_allow = ["*"]
-else:
-    origins_to_allow = settings.BACKEND_CORS_ORIGINS
+# --- Configuration CORS (sécurisée) ---
+# Defaults: production should allow only the deployed frontend origin(s)
+DEFAULT_PROD_ORIGINS = [
+    "https://unigom-by-nathanael-batera.onrender.com",
+]
 
-# On utilise toujours la configuration du fichier .env pour plus de flexibilité.
+def _normalize_origins(raw):
+    # Accept list or JSON string or single string
+    if not raw:
+        return []
+    if isinstance(raw, list):
+        return raw
+    if isinstance(raw, str):
+        raw = raw.strip()
+        # try JSON array
+        if raw.startswith("["):
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, list):
+                    return parsed
+            except Exception:
+                pass
+        return [raw]
+    return []
+
+def _sanitize_origins(origins_list):
+    clean = []
+    for o in origins_list:
+        if not o or o == "*":
+            # never allow wildcard in production
+            continue
+        try:
+            parsed = urlparse(o)
+            if parsed.scheme in ("http", "https") and parsed.netloc:
+                clean.append(o.rstrip('/'))
+        except Exception:
+            continue
+    # preserve order and uniqueness
+    return list(dict.fromkeys(clean))
+
+if settings.DEBUG:
+    # Allow common local dev origins but avoid wildcard in production code path
+    origins_to_allow = [
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://localhost:8080",
+        "http://127.0.0.1:8000",
+        "http://localhost:8000",
+    ]
+else:
+    raw = getattr(settings, 'BACKEND_CORS_ORIGINS', None)
+    origins_to_allow = _sanitize_origins(_normalize_origins(raw))
+    if not origins_to_allow:
+        origins_to_allow = DEFAULT_PROD_ORIGINS
+
+# Apply middleware with secure defaults
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins_to_allow,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
