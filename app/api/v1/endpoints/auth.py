@@ -1,64 +1,57 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
-from sqlalchemy.ext.asyncio import AsyncSession
+from firebase_admin import auth
+from pydantic import BaseModel
 
-from app.core.security import create_access_token, verify_password, get_current_active_user
-from app.schemas.token import Token
-# from app.crud.crud_user import crud_user # Sera créé plus tard
-from database import get_session
-from models import Utilisateur # Temporaire, on utilisera le crud plus tard
-from sqlalchemy.future import select
-from sqlalchemy import or_
+from app.core.security import create_access_token, get_current_active_user
+from app.models.user import User
 
 router = APIRouter()
 
-@router.post("/login", response_model=Token, summary="User Login")
-async def login_for_access_token(
-    session: AsyncSession = Depends(get_session),
-    form_data: OAuth2PasswordRequestForm = Depends()
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+class FirebaseLoginRequest(BaseModel):
+    id_token: str
+
+@router.post("/login", response_model=Token)
+async def login_with_firebase(
+    request: FirebaseLoginRequest
 ):
     """
-    Authentifie un utilisateur et retourne un token JWT.
+    Authenticates with a Firebase ID token and returns a local API access token.
     """
-    # Remplacer par crud_user.get_by_email quand le CRUD sera implémenté
-    # Recherche par email OU username
-    result = await session.execute(
-        select(Utilisateur).where(
-            or_(Utilisateur.email == form_data.username, Utilisateur.nom_utilisateur == form_data.username)
-        )
-    )
-    user = result.scalar_one_or_none()
-    
-    if not user or not verify_password(form_data.password, user.mot_de_passe):
+    try:
+        # 1. Verify the Firebase ID token
+        decoded_token = auth.verify_id_token(request.id_token)
+        uid = decoded_token['uid']
+        
+        # 2. (Optional but recommended) Check if user exists in your local DB/Firestore
+        # This step is already implicitly handled by get_current_user, but good to be aware of.
+        # For now, we trust that if Firebase gives a valid token, the user is valid.
+
+        # 3. Create a local JWT access token for your API
+        # The 'sub' (subject) of your token will be the Firebase UID.
+        access_token = create_access_token(data={"sub": uid})
+        
+        return {"access_token": access_token, "token_type": "bearer"}
+
+    except auth.InvalidIdTokenError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
+            detail="Invalid Firebase ID token",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
-    if not user.is_active:
-        raise HTTPException(status_code=400, detail="Inactive user")
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An error occurred during authentication: {e}",
+        )
 
-    access_token = create_access_token(
-        data={"sub": str(user.id)}
-    )
-    
-    return {"access_token": access_token, "token_type": "bearer"}
-
-@router.get("/me")
-async def read_users_me(current_user: Utilisateur = Depends(get_current_active_user)):
+@router.get("/me", response_model=User)
+def read_users_me(current_user: User = Depends(get_current_active_user)):
     """
-    Récupère les informations de l'utilisateur connecté.
+    Get current user.
     """
-    # On retourne un dictionnaire simple pour l'instant pour éviter les problèmes de sérialisation
-    return {
-        "id": current_user.id,
-        "username": current_user.username,
-        "email": current_user.email,
-        "first_name": current_user.first_name,
-        "last_name": current_user.last_name,
-        "is_active": current_user.is_active,
-        # Pour tester les autres dashboards, changez "student" par "teacher" ou "accountant" ici
-        # ou implémentez le chargement dynamique du rôle depuis la base de données
-        "role": "student" 
-    }
+    return current_user
