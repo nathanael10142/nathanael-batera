@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
 
+    # Firebase
+    FIREBASE_CREDENTIALS_JSON: str
+
     # CORS (List[str] pour accepter '*' et URLs réelles)
     BACKEND_CORS_ORIGINS: List[str] = []
 
