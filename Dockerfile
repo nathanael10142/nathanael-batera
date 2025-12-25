@@ -11,6 +11,8 @@ FROM python:3.11-slim
 WORKDIR /app
 # Copier les dépendances installées depuis le builder
 COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+# Copier les exécutables installés (comme uvicorn)
+COPY --from=builder /usr/local/bin /usr/local/bin
 # Copier le code de l'application
 COPY . .
 # Copier et rendre le script de démarrage exécutable
