@@ -5,7 +5,7 @@ from pydantic import BaseModel
 
 from app.core.security import create_access_token, get_current_active_user # security depends on the SQLAlchemy model
 from app.models.user import User as DBUser # Rename the SQLAlchemy model to avoid conflict
-from app.schemas.user_firebase import User as UserSchema # Import the Pydantic schema
+from app.schemas.user import User as UserSchema # Import the Pydantic schema
 
 
 router = APIRouter()

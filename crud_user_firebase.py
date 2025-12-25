@@ -2,7 +2,7 @@ from google.cloud.firestore import Client as FirestoreClient
 from firebase_admin import auth
 from typing import List, Dict, Any, Optional
 
-from app.schemas.user_firebase import UserCreate, UserUpdate
+from app.schemas.user import UserCreate, UserUpdate
 
 COLLECTION_NAME = "users"
 
