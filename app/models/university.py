@@ -1,7 +1,7 @@
 """
 Modèles : Structure universitaire (Université → Faculté → Département → Option)
 """
-from sqlalchemy import Column, String, Integer, ForeignKey, Text, JSON
+from sqlalchemy import Column, String, Integer, ForeignKey, Text, JSON, Boolean, DateTime
 from sqlalchemy.orm import relationship
 
 from app.models.base import BaseModel
