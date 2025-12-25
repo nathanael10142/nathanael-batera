@@ -8,10 +8,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from firebase_admin import auth, firestore # 👈 Importer firestore
 from app.core.config import settings
-# On importe le modèle de la base de données pour pouvoir le peupler
-# avec les informations de Firebase et de notre propre base de données.
-# Assurez-vous que le chemin d'importation est correct.
-from app.models.user import User
+from types import SimpleNamespace
 
 
 # OAuth2
@@ -25,7 +22,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
         expire = datetime.utcnow() + expires_delta
     else:
         expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    
+
     to_encode.update({"exp": expire})
     encoded_jwt = jose_jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
     return encoded_jwt
@@ -33,81 +30,79 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
 
 async def get_current_user(
     token: str = Depends(oauth2_scheme)
-) -> User: # 👈 CHANGEMENT: Nous allons renvoyer notre modèle User complet
-    """Obtenir l'utilisateur courant depuis le token"""
+) -> Any:
+    """Obtenir l'utilisateur courant depuis le token. Retourne un objet léger.
+    """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
-    
+
     try:
-        # D'abord, décoder le token JWT que notre propre API a créé
         payload = jose_jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         firebase_uid: str = payload.get("sub")
         if firebase_uid is None:
             raise credentials_exception
     except JWTError:
         raise credentials_exception
-    
-    # Ensuite, nous allons chercher l'utilisateur dans notre propre base de données
-    # en utilisant l'UID de Firebase comme identifiant.
-    # Cela nous donne accès à ses rôles et permissions définis dans notre système.
-    try:
-        # Étape 1: Vérifier que l'utilisateur existe toujours dans Firebase
-        firebase_user_record = auth.get_user(firebase_uid)
 
-        # Étape 2: Charger les détails de l'utilisateur depuis Firestore
+    try:
+        firebase_user_record = auth.get_user(firebase_uid)
         db = firestore.client()
         user_doc_ref = db.collection('users').document(firebase_uid)
         user_doc = user_doc_ref.get()
 
         if not user_doc.exists:
-            # Si l'utilisateur existe dans Firebase Auth mais pas dans notre base de données Firestore,
-            # c'est une erreur de synchronisation.
             raise credentials_exception
 
-        user_data = user_doc.to_dict()
-        # On combine les données de Firestore et de Firebase Auth pour créer notre objet User
-        user = User(id=firebase_user_record.uid, email=firebase_user_record.email, is_active=not firebase_user_record.disabled, **user_data)
+        user_data = user_doc.to_dict() or {}
+        # Build a lightweight user object that contains needed attributes
+        role_val = user_data.get('role') or user_data.get('role_name') or user_data.get('role_id')
+        if isinstance(role_val, dict):
+            role_name = role_val.get('name')
+        else:
+            role_name = role_val
 
-    except auth.UserNotFoundError: # L'utilisateur a été supprimé de Firebase
+        role_obj = SimpleNamespace(name=role_name) if role_name else None
+
+        user = SimpleNamespace(
+            id=str(firebase_user_record.uid),
+            email=firebase_user_record.email,
+            is_active=not getattr(firebase_user_record, 'disabled', False),
+            role=role_obj,
+            raw=user_data
+        )
+
+    except auth.UserNotFoundError:
         raise credentials_exception
-    
+
     if user is None:
         raise credentials_exception
-    
+
     return user
 
 
 async def get_current_active_user(
-    current_user: User = Depends(get_current_user)
-) -> User:
+    current_user: Any = Depends(get_current_user)
+) -> Any:
     """Obtenir l'utilisateur actif"""
-    if not current_user.is_active:
+    if not getattr(current_user, 'is_active', False):
         raise HTTPException(status_code=400, detail="Inactive user")
     return current_user
 
 
-def check_permission(user: User, permission: str) -> bool:
+def check_permission(user: Any, permission: str) -> bool:
     """Vérifier si l'utilisateur a la permission (logique à implémenter)"""
-    # La logique de permission dépendra de la structure de votre modèle `User` et `Role`.
-    # Si `user.role` est une chaîne de caractères (ex: "admin", "teacher").
-    # if user.role == "admin":
-    if hasattr(user, 'role') and user.role and user.role.name == "admin": # Adapté pour un enum ou un objet avec un attribut `name`
+    if hasattr(user, 'role') and user.role and getattr(user.role, 'name', None) == "admin":
         return True
-    
-    # Vérifier les permissions du rôle
-    # if user.role and permission in [p.code for p in user.role.permissions]:
-    #     return True
-    
     return False
 
 
 def require_permission(permission: str):
     """Décorateur pour vérifier les permissions"""
-    async def permission_checker(current_user: User = Depends(get_current_active_user)):
-        if not check_permission(current_user, permission): # Logique de permission à affiner
+    async def permission_checker(current_user: Any = Depends(get_current_active_user)):
+        if not check_permission(current_user, permission):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not enough permissions"
@@ -116,31 +111,20 @@ def require_permission(permission: str):
     return permission_checker
 
 
-# Permissions standard
 class Permissions:
-    """Constantes des permissions"""
-    # Admin
     ADMIN_FULL = "admin.full"
     ADMIN_CREATE_FACULTY = "admin.create_faculty"
     ADMIN_MANAGE_USERS = "admin.manage_users"
-    
-    # Academic
     ACADEMIC_VIEW = "academic.view"
     ACADEMIC_MANAGE = "academic.manage"
     ACADEMIC_ENCODE_NOTES = "academic.encode_notes"
     ACADEMIC_VALIDATE_NOTES = "academic.validate_notes"
     ACADEMIC_DELIBERATION = "academic.deliberation"
-    
-    # Financial
     FINANCIAL_VIEW = "financial.view"
     FINANCIAL_MANAGE = "financial.manage"
     FINANCIAL_PAYMENT = "financial.payment"
     FINANCIAL_AUDIT = "financial.audit"
-    
-    # Student
     STUDENT_VIEW_OWN = "student.view_own"
     STUDENT_MANAGE_OWN = "student.manage_own"
-    
-    # Communication
     COMMUNICATION_SEND = "communication.send"
     COMMUNICATION_OFFICIAL = "communication.official"

@@ -2,59 +2,53 @@ import asyncio
 import sys
 import os
 
-# Ajout du dossier courant au path pour trouver 'app', 'database', etc.
+# Ajout du dossier courant au path pour trouver 'app'
 sys.path.append(os.getcwd())
 
-from sqlalchemy import select
-from database import async_session
-from models import Utilisateur, Role
+from firebase_admin import auth, firestore
 from app.core.security import get_password_hash
 
 async def create_data():
-    async with async_session() as session:
-        print("--- Démarrage du script de création ---")
+    print("--- Démarrage du script de création (Firestore) ---")
 
-        # 1. Créer le rôle 'student'
-        result = await session.execute(select(Role).where(Role.nom == "Etudiant"))
-        role = result.scalar_one_or_none()
-        
-        if not role:
-            print("Création du rôle 'Etudiant'...")
-            role = Role(nom="Etudiant")
-            session.add(role)
-            await session.commit()
-            await session.refresh(role)
-        else:
-            print("Le rôle 'student' existe déjà.")
+    db = firestore.client()
 
-        # 2. Créer l'utilisateur
-        email = "etudiant@univ.com"
-        username = "etudiant"
-        password = "password123"
-        
-        result = await session.execute(select(Utilisateur).where(Utilisateur.email == email))
-        user = result.scalar_one_or_none()
-        
-        if not user:
-            print(f"Création de l'utilisateur {email}...")
-            user = Utilisateur(
-                email=email,
-                nom_utilisateur=username,
-                mot_de_passe=get_password_hash(password),
-                actif=True,
-                role_id=role.id
-            )
-            session.add(user)
-            await session.commit()
-            print("✅ Utilisateur créé avec succès !")
-            print(f"👉 Login    : {username} (ou {email})")
-            print(f"👉 Password : {password}")
-        else:
-            print(f"ℹ️ L'utilisateur {email} existe déjà.")
+    # 1. Créer le rôle 'student' : dans Firestore on peut stocker roles dans une collection
+    role_docs = list(db.collection('roles').where('name','==','Etudiant').limit(1).stream())
+    if not role_docs:
+        print("Création du rôle 'Etudiant'...")
+        db.collection('roles').document().set({'name': 'Etudiant', 'code': 'student'})
+    else:
+        print("Le rôle 'Etudiant' existe déjà dans Firestore.")
 
-if __name__ == "__main__":
-    # Fix pour Windows et asyncio
+    # 2. Créer l'utilisateur de test
+    email = "etudiant@univ.com"
+    username = "etudiant"
+    password = "password123"
+
+    try:
+        user_record = auth.get_user_by_email(email)
+        print("Utilisateur test déjà présent dans Firebase Auth.")
+    except auth.UserNotFoundError:
+        print(f"Création de l'utilisateur {email} dans Firebase Auth...")
+        user_record = auth.create_user(email=email, password=password, display_name=username)
+
+    # Create profile doc
+    profile_ref = db.collection('users').document(user_record.uid)
+    profile_doc = profile_ref.get()
+    if not profile_doc.exists:
+        profile_ref.set({
+            'uid': user_record.uid,
+            'email': email,
+            'username': username,
+            'role': 'student',
+            'created_at': firestore.SERVER_TIMESTAMP
+        })
+        print('✅ Utilisateur créé avec succès dans Firestore.')
+    else:
+        print('ℹ️ Profil utilisateur déjà existant dans Firestore.')
+
+if __name__ == '__main__':
     if sys.platform == 'win32':
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-    
     asyncio.run(create_data())

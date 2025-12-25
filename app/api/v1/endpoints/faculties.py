@@ -1,15 +1,12 @@
 from typing import Any, List
-from fastapi import APIRouter, Depends
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-
-from database import get_session
-from models import Faculte
+from fastapi import APIRouter
+from firebase_admin import firestore
 
 router = APIRouter()
 
 @router.get("/")
-async def read_faculties(db: AsyncSession = Depends(get_session)) -> Any:
-    """Retrieve all faculties (public)"""
-    result = await db.execute(select(Faculte))
-    return result.scalars().all()
+async def read_faculties() -> Any:
+    """Retrieve all faculties from Firestore"""
+    db = firestore.client()
+    docs = db.collection("faculties").limit(100).stream()
+    return [d.to_dict() for d in docs]

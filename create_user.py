@@ -1,67 +1,48 @@
 import asyncio
 import sys
 import os
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
-# Ajout du dossier courant au path pour trouver les modules
+# Ajout du dossier courant au path pour trouver 'app'
 sys.path.append(os.getcwd())
 
+from firebase_admin import auth, firestore
 from app.core.security import get_password_hash
-from database import async_session
-from models import Utilisateur, Role
 
 async def create_user():
     """
-    Crée un nouvel utilisateur dans la base de données avec un mot de passe correctement haché.
+    Create an admin user in Firebase Auth and a profile in Firestore.
     """
     email = "nathanaelhacker6@gmail.com"
     plain_password = "nathanael1209ba"
 
     print(f"Vérification de l'existence de l'utilisateur : {email}")
-    
-    db: AsyncSession = async_session()
+
     try:
-        # 1. Trouver le rôle "Admin"
-        result_role = await db.execute(select(Role).where(Role.nom == "Admin"))
-        admin_role = result_role.scalar_one_or_none()
+        # Try to find user in Firebase Auth
+        try:
+            user_record = auth.get_user_by_email(email)
+            print("L'utilisateur existe déjà dans Firebase Auth. Mise à jour du mot de passe.")
+            auth.update_user(user_record.uid, password=plain_password)
+        except auth.UserNotFoundError:
+            print("Création de l'utilisateur dans Firebase Auth...")
+            user_record = auth.create_user(email=email, password=plain_password, display_name="Admin")
 
-        if not admin_role:
-            print("❌ ERREUR: Le rôle 'Admin' n'a pas été trouvé. Veuillez d'abord lancer le script seed_data.py.")
-            return
+        # Create profile document in Firestore
+        db = firestore.client()
+        profile = {
+            "uid": user_record.uid,
+            "email": email,
+            "display_name": "Admin",
+            "role": "admin",
+            "created_at": firestore.SERVER_TIMESTAMP
+        }
+        db.collection("users").document(user_record.uid).set(profile)
 
-        print(f"Rôle 'Admin' trouvé avec l'ID: {admin_role.id}")
-
-        # Vérifier si l'utilisateur existe déjà
-        result = await db.execute(select(Utilisateur).where(Utilisateur.email == email))
-        existing_user = result.scalars().first()
-
-        if existing_user:
-            print(f"L'utilisateur {email} existe déjà. Mise à jour du mot de passe et du rôle.")
-            existing_user.mot_de_passe = get_password_hash(plain_password)
-            existing_user.role_id = admin_role.id
-            print("Mot de passe haché et mis à jour.")
-        else:
-            print(f"L'utilisateur {email} n'existe pas. Création en cours...")
-            # Créer un nouvel utilisateur
-            hashed_password = get_password_hash(plain_password)
-            new_user = Utilisateur(
-                email=email,
-                nom_utilisateur=email.split('@')[0],
-                mot_de_passe=hashed_password,
-                actif=True,
-                role_id=admin_role.id
-            )
-            db.add(new_user)
-            print("Nouvel utilisateur créé avec un mot de passe haché.")
-
-        await db.commit()
-        print("✅ Opération terminée avec succès.")
-    finally:
-        await db.close()
+        print("✅ Utilisateur admin créé/mis à jour avec succès dans Firebase et Firestore.")
+    except Exception as e:
+        print(f"Erreur: {e}")
 
 if __name__ == "__main__":
-    # Fix pour Windows et asyncio
     if sys.platform == 'win32':
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     asyncio.run(create_user())

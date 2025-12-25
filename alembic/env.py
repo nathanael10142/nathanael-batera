@@ -1,10 +1,6 @@
 import asyncio
 from logging.config import fileConfig
 
-from sqlalchemy import pool
-from sqlalchemy.engine import Connection
-from sqlalchemy.ext.asyncio import async_engine_from_config
-
 from alembic import context
 
 # this is the Alembic Config object, which provides
@@ -16,45 +12,27 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# add your model's MetaData object here
-# for 'autogenerate' support
-# from myapp import mymodel
-# target_metadata = mymodel.Base.metadata
-# from models import Base # Assurez-vous que vos modèles sont importables
-from database import Base # Importe la Base depuis votre fichier database.py
-target_metadata = Base.metadata
+# In Firestore-only deployments, we don't have SQL metadata for Alembic.
+# Set target_metadata to None so alembic autogenerate doesn't attempt to use it.
+try:
+    from database import Base
+    target_metadata = Base.metadata if Base is not None else None
+except Exception:
+    target_metadata = None
 
-# other values from the config, defined by the needs of env.py,
-# can be acquired:
-# my_important_option = config.get_main_option("my_important_option")
-# ... etc.
-
-# --- Custom part to load config from Pydantic settings ---
+# --- Custom part to load config from Pydantic settings (left for completeness) ---
 from app.core.config import settings
 
-# Utilise l'URL de base de données SYNCHRONE pour les migrations Alembic.
-# Alembic ne fonctionne pas bien avec les drivers async.
-sync_db_url = str(settings.DATABASE_URL_SYNC)
+# Keep SQL URL logic for users who still want to run migrations locally
+sync_db_url = getattr(settings, 'DATABASE_URL_SYNC', None)
 if not sync_db_url:
-    # Si DATABASE_URL_SYNC n'est pas défini, on essaie de le déduire de DATABASE_URL
-    sync_db_url = str(settings.DATABASE_URL).replace("+asyncpg", "")
+    sync_db_url = getattr(settings, 'DATABASE_URL', None)
 
-config.set_main_option("sqlalchemy.url", sync_db_url)
-# --- End of custom part ---
+if sync_db_url:
+    config.set_main_option("sqlalchemy.url", str(sync_db_url))
 
 
 def run_migrations_offline() -> None:
-    """Run migrations in 'offline' mode.
-
-    This configures the context with just a URL
-    and not an Engine, though an Engine is acceptable
-    here as well.  By skipping the Engine creation
-    we don't even need a DBAPI to be available.
-
-    Calls to context.execute() here emit the given string to the
-    script output.
-
-    """
     url = config.get_main_option("sqlalchemy.url")
     context.configure(
         url=url,
@@ -67,7 +45,7 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
-def do_run_migrations(connection: Connection) -> None:
+def do_run_migrations(connection):
     context.configure(connection=connection, target_metadata=target_metadata)
 
     with context.begin_transaction():
@@ -75,12 +53,15 @@ def do_run_migrations(connection: Connection) -> None:
 
 
 async def run_migrations_online() -> None:
-    """Run migrations in 'online' mode.
+    # If there's no SQL URL configured, skip online migrations in Firestore mode.
+    url = config.get_main_option("sqlalchemy.url")
+    if not url:
+        print("No SQL database configured - skipping Alembic online migrations.")
+        return
 
-    In this scenario we need to create an Engine
-    and associate a connection with the context.
+    from sqlalchemy import pool
+    from sqlalchemy.ext.asyncio import async_engine_from_config
 
-    """
     connectable = async_engine_from_config(
         config.get_section(config.config_main_section, {}),
         prefix="sqlalchemy.",
