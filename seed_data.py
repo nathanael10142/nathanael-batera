@@ -5,7 +5,6 @@ import os
 sys.path.append(os.getcwd())
 
 from firebase_admin import auth, firestore
-from app.core.security import get_password_hash
 
 COMMON_PASSWORD = "nathanael1209ba"
 
