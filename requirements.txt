@@ -6,4 +6,3 @@ python-dotenv
 sqlalchemy
 asyncpg
 python-jose[cryptography]
-
