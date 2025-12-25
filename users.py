@@ -3,7 +3,7 @@ from typing import List
 from google.cloud.firestore import Client as FirestoreClient
 
 from app.core.firebase_connector import get_firestore_client
-from app.schemas.user_firebase import User, UserCreate, UserUpdate
+from app.schemas.user import User, UserCreate, UserUpdate
 from app.crud import crud_user_firebase
 
 router = APIRouter()
