@@ -16,7 +16,7 @@ class UserCreate(BaseModel):
 @router.post("/", status_code=201)
 async def create_user(user_in: UserCreate):
     """
-    Créer un nouvel utilisateur dans Firebase Auth et un profil dans Firestore.
+    Créer un nouvel utilisateur dans Firebase Auth et un profil dans Firestore.I
     """
     try:
         # 1. Créer l'utilisateur dans Firebase Authentication
