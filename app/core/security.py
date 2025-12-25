@@ -3,16 +3,13 @@ Sécurité : authentification, hashing, permissions
 """
 from datetime import datetime, timedelta
 from typing import Optional, Any
-from jose import JWTError, jwt
+from jose import JWTError, jwt as jose_jwt
 from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-
+from firebase_admin import auth
 from app.core.config import settings
-from database import get_session as get_db
-from models import Utilisateur as User
+from app.schemas.user_firebase import User as FirebaseUser # Utiliser notre schéma Pydantic
 
 
 # Password hashing
@@ -41,14 +38,13 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
         expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     
     to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+    encoded_jwt = jose_jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
     return encoded_jwt
 
 
 async def get_current_user(
-    db: AsyncSession = Depends(get_db),
     token: str = Depends(oauth2_scheme)
-) -> User:
+) -> FirebaseUser:
     """Obtenir l'utilisateur courant depuis le token"""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -57,16 +53,22 @@ async def get_current_user(
     )
     
     try:
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-        user_id: str = payload.get("sub")
-        if user_id is None:
+        # D'abord, décoder le token JWT que notre propre API a créé
+        payload = jose_jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        firebase_uid: str = payload.get("sub")
+        if firebase_uid is None:
             raise credentials_exception
     except JWTError:
         raise credentials_exception
     
-    # user = await crud_user.get(db, id=int(user_id))
-    result = await db.execute(select(User).where(User.id == int(user_id)))
-    user = result.scalar_one_or_none()
+    # Ensuite, vérifier auprès de Firebase que cet utilisateur existe vraiment
+    try:
+        user_record = auth.get_user(firebase_uid)
+        # On peut construire un objet utilisateur simple pour le reste de l'app
+        user = FirebaseUser(id=user_record.uid, email=user_record.email, username=user_record.display_name, is_active=not user_record.disabled)
+    except auth.UserNotFoundError:
+        raise credentials_exception
+    
     if user is None:
         raise credentials_exception
     
@@ -74,8 +76,8 @@ async def get_current_user(
 
 
 async def get_current_active_user(
-    current_user: User = Depends(get_current_user)
-) -> User:
+    current_user: FirebaseUser = Depends(get_current_user)
+) -> FirebaseUser:
     """Obtenir l'utilisateur actif"""
     if not current_user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
@@ -83,7 +85,7 @@ async def get_current_active_user(
 
 
 def check_permission(user: User, permission: str) -> bool:
-    """Vérifier si l'utilisateur a la permission"""
+    """Vérifier si l'utilisateur a la permission (logique à implémenter)"""
     if user.role and user.role.nom == "Admin":
         return True
     
@@ -97,7 +99,7 @@ def check_permission(user: User, permission: str) -> bool:
 def require_permission(permission: str):
     """Décorateur pour vérifier les permissions"""
     async def permission_checker(current_user: User = Depends(get_current_active_user)):
-        if not check_permission(current_user, permission):
+        if not check_permission(current_user, permission): # Logique de permission à affiner
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not enough permissions"

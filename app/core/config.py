@@ -20,18 +20,6 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
 
-    # Database
-    DATABASE_URL: PostgresDsn
-    DATABASE_URL_SYNC: Optional[PostgresDsn] = None
-
-    @validator("DATABASE_URL", pre=True)
-    def assemble_db_connection(cls, v: Optional[str]) -> Any:
-        if isinstance(v, str):
-            # S'assure que le driver asyncpg est utilisé pour les connexions asynchrones
-            if v.startswith("postgresql://"):
-                return v.replace("postgresql://", "postgresql+asyncpg://")
-        return v
-
     # Redis
     REDIS_URL: str
 
