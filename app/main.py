@@ -105,8 +105,11 @@ else:
 
 # DEBUG: print effective CORS policy so logs in Render (or other hosts) confirm it
 print(f"🔐 CORS effective allow_origins: {origins_to_allow}")
-regex_value = (r"^http://localhost(:[0-9]+)?$" if settings.DEBUG else None)
-print(f"🔐 CORS allow_origin_regex (enabled if DEBUG): {regex_value}")
+# Allow localhost origins on any port to simplify local development (both http and https).
+# This avoids frequent CORS errors when the frontend runs on localhost with a dynamic port.
+# In production, prefer configuring BACKEND_CORS_ORIGINS environment variable to restrict origins.
+regex_value = r"^https?://(localhost|127\\.0\\.0\\.1)(:[0-9]+)?$"
+print(f"🔐 CORS allow_origin_regex: {regex_value}")
 
 # Apply middleware with secure defaults
 app.add_middleware(
