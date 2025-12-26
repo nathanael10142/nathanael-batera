@@ -103,6 +103,10 @@ else:
     if not origins_to_allow:
         origins_to_allow = DEFAULT_PROD_ORIGINS
 
+# DEBUG: print effective CORS policy so logs in Render (or other hosts) confirm it
+print(f"🔐 CORS effective allow_origins: {origins_to_allow}")
+print(f"🔐 CORS allow_origin_regex (enabled if DEBUG): {(r"^http://localhost(:[0-9]+)?$" if settings.DEBUG else None)}")
+
 # Apply middleware with secure defaults
 app.add_middleware(
     CORSMiddleware,
