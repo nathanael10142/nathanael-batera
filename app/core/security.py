@@ -23,8 +23,20 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     else:
         expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
 
-    to_encode.update({"exp": expire})
+    # Ajouter des informations d'horodatage et le type pour plus de robustesse
+    now = datetime.utcnow()
+    to_encode.update({"exp": expire, "iat": now, "type": "access"})
     encoded_jwt = jose_jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+
+    # Debug: imprimer la longueur et le token complet si DEBUG activé
+    if getattr(settings, 'DEBUG', False):
+        try:
+            print(f"🔑 Token JWT créé - Longueur: {len(encoded_jwt)}")
+            print(f"🔑 Token complet: {encoded_jwt}")
+        except Exception:
+            # Pas critique; ne pas échouer la génération du token pour un problème de logging
+            pass
+
     return encoded_jwt
 
 

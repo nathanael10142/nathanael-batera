@@ -63,7 +63,12 @@ async def login_with_firebase(
         # 3. Create a local JWT access token for your API
         access_token = create_access_token(data={"sub": uid})
         if getattr(_settings, 'DEBUG', False):
-            print(f"🔑 [DEBUG] Created local access token (truncated): {access_token[:20]}... (len={len(access_token)})")
+            # Print full token and length to help diagnose truncated token issues
+            try:
+                print(f"📤 Réponse login - Token length: {len(access_token)}")
+                print(f"📤 Token complet: {access_token}")
+            except Exception:
+                pass
 
         # Return token + lightweight user info
         return {
