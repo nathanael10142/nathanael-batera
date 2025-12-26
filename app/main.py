@@ -95,6 +95,7 @@ if settings.DEBUG:
         "http://127.0.0.1:8000",
         "http://localhost:52551", # Ajout pour le client Flutter en dev
         "http://localhost:8000",
+        "http://localhost:56910", # Ajouté: port utilisé par le client web local
     ]
 else:
     raw = getattr(settings, 'BACKEND_CORS_ORIGINS', None)
@@ -106,6 +107,8 @@ else:
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins_to_allow,
+    # Allow localhost with any port during development to avoid exact-port issues
+    allow_origin_regex=(r"^http://localhost(:[0-9]+)?$" if settings.DEBUG else None),
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
