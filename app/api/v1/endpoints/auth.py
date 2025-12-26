@@ -33,10 +33,7 @@ async def login_with_firebase(
         if getattr(_settings, 'DEBUG', False):
             print(f"🔐 [DEBUG] Firebase id_token verified for uid={uid}. Decoded keys={list(decoded_token.keys())}")
 
-        # 2. (Optional but recommended) Check if user exists in your local DB/Firestore
-        # This step is already implicitly handled by get_current_user, but good to be aware of.
-
-        # 3. Create a local JWT access token for your API
+        # 2. Create a local JWT access token for your API
         access_token = create_access_token(data={"sub": uid})
         if getattr(_settings, 'DEBUG', False):
             print(f"🔑 [DEBUG] Created local access token (truncated): {access_token[:12]}... (len={len(access_token)})")
