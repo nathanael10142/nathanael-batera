@@ -105,14 +105,15 @@ else:
 
 # DEBUG: print effective CORS policy so logs in Render (or other hosts) confirm it
 print(f"🔐 CORS effective allow_origins: {origins_to_allow}")
-print(f"🔐 CORS allow_origin_regex (enabled if DEBUG): {(r"^http://localhost(:[0-9]+)?$" if settings.DEBUG else None)}")
+regex_value = (r"^http://localhost(:[0-9]+)?$" if settings.DEBUG else None)
+print(f"🔐 CORS allow_origin_regex (enabled if DEBUG): {regex_value}")
 
 # Apply middleware with secure defaults
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins_to_allow,
     # Allow localhost with any port during development to avoid exact-port issues
-    allow_origin_regex=(r"^http://localhost(:[0-9]+)?$" if settings.DEBUG else None),
+    allow_origin_regex=regex_value,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
