@@ -40,12 +40,24 @@ async def get_current_user(
     )
 
     try:
-        payload = jose_jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-        firebase_uid: str = payload.get("sub")
-        if firebase_uid is None:
+        try:
+            payload = jose_jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+            if getattr(settings, 'DEBUG', False):
+                # Print a compact summary (no secrets)
+                print(f"🔓 JWT decoded successfully. keys={list(payload.keys())}, sub={payload.get('sub')}")
+            firebase_uid: str = payload.get("sub")
+            if firebase_uid is None:
+                raise credentials_exception
+        except JWTError as e:
+            # Debug info to help diagnose decode failures in deployed env (do not print SECRET_KEY value)
+            if getattr(settings, 'DEBUG', False):
+                sk_len = len(settings.SECRET_KEY) if settings.SECRET_KEY else 0
+                token_preview = (token[:40] + '...') if token else '<empty>'
+                print(f"❌ JWT decode error: {e}; SECRET_KEY_len={sk_len}; ALGORITHM={settings.ALGORITHM}; token_preview={token_preview}")
             raise credentials_exception
-    except JWTError:
-        raise credentials_exception
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
 
     try:
         firebase_user_record = auth.get_user(firebase_uid)
