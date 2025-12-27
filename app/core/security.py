@@ -161,7 +161,9 @@ async def get_current_active_user(
 
 def check_permission(user: Any, permission: str) -> bool:
     """Vérifier si l'utilisateur a la permission (logique à implémenter)"""
-    if hasattr(user, 'role') and user.role and getattr(user.role, 'name', None) == "admin":
+    # **CORRECTION : Comparer directement la chaîne de caractères du rôle.**
+    # L'objet `user` a maintenant un attribut `role` qui est un string (ex: "admin").
+    if hasattr(user, 'role') and user.role == "admin":
         return True
     return False
 
