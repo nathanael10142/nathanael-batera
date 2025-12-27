@@ -290,8 +290,14 @@ async def public_list_students() -> Any:
 
 @public_router.get('/teachers')
 async def public_list_teachers() -> Any:
-    docs = list_docs('teachers', where=[('is_deleted','==',False)], limit=2000)
-    return docs
+    # Return all teachers where is_deleted is not True (handles documents missing the flag)
+    docs = list_docs('teachers', limit=2000)
+    try:
+        visible = [d for d in docs if not (d.get('is_deleted', False))]
+    except Exception:
+        # Fallback: if docs are not a list or unexpected shape, return as-is
+        visible = docs
+    return visible
 
 
 # UE / Courses
