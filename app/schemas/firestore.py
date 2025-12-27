@@ -3,9 +3,9 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime
 
 class FacultyCreate(BaseModel):
-    university_id: Optional[str]
+    university_id: Optional[str] = None
     name: str
-    code: Optional[str]
+    code: Optional[str] = None
     dean_user_id: Optional[str] = None
     secretary_user_id: Optional[str] = None
     finance_params: Optional[Dict[str, Any]] = None
@@ -33,9 +33,9 @@ class FacultyListResponse(BaseModel):
     faculties: List[FacultyOut]
 
 class DepartmentCreate(BaseModel):
-    faculty_id: Optional[str]
+    faculty_id: Optional[str] = None
     name: str
-    code: Optional[str]
+    code: Optional[str] = None
     head_user_id: Optional[str] = None
     is_active: Optional[bool] = True
     is_deleted: Optional[bool] = False
@@ -44,12 +44,12 @@ class DepartmentOut(DepartmentCreate):
     id: Optional[str]
 
 class ProgramCreate(BaseModel):
-    faculty_id: Optional[str]
-    department_id: Optional[str]
+    faculty_id: Optional[str] = None
+    department_id: Optional[str] = None
     name: str
-    code: Optional[str]
-    level: Optional[str]
-    duration_years: Optional[int]
+    code: Optional[str] = None
+    level: Optional[str] = None
+    duration_years: Optional[int] = None
     is_active: Optional[bool] = True
     is_deleted: Optional[bool] = False
 
@@ -57,9 +57,9 @@ class ProgramOut(ProgramCreate):
     id: Optional[str]
 
 class PromotionCreate(BaseModel):
-    program_id: Optional[str]
+    program_id: Optional[str] = None
     name: str
-    year: Optional[int]
+    year: Optional[int] = None
     is_active: Optional[bool] = True
     is_deleted: Optional[bool] = False
 
