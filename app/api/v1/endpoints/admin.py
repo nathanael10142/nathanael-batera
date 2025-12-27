@@ -28,6 +28,18 @@ router = APIRouter()
 public_router = APIRouter()
 
 
+def _public_list(collection: str, limit: int = 2000):
+    """Helper: fetch documents for a public listing and exclude those with is_deleted == True.
+    This avoids excluding older documents that do not have the field.
+    """
+    docs = list_docs(collection, limit=limit)
+    try:
+        visible = [d for d in docs if not d.get('is_deleted', False)]
+    except Exception:
+        visible = docs
+    return visible
+
+
 def _generate_matricule() -> str:
     # Simple matricule: YEAR + 6 random digits
     return f"{__import__('datetime').datetime.now().year}{random.randint(100000, 999999)}"
@@ -138,8 +150,12 @@ async def list_all_faculties(
     if not (getattr(current_user, 'role', None) and getattr(current_user.role, 'name', None) == "admin"):
         raise HTTPException(status_code=403, detail="Permission refusée")
 
-    docs = list_docs("faculties", where=[("is_deleted","==",False)], limit=500)
-    faculties = [FacultyOut(**d) for d in docs]
+    docs = list_docs("faculties", limit=500)
+    try:
+        visible_docs = [d for d in docs if not d.get('is_deleted', False)]
+    except Exception:
+        visible_docs = docs
+    faculties = [FacultyOut(**d) for d in visible_docs]
     return FacultyListResponse(total=len(faculties), faculties=faculties)
 
 
@@ -270,34 +286,44 @@ async def delete_group(group_id: str, current_user: User = Depends(require_permi
 
 @public_router.get('/groups')
 async def list_groups() -> Any:
-    docs = list_docs('groups', where=[('is_deleted','==',False)], limit=1000)
-    return docs
+    return _public_list('groups', limit=1000)
 
 
 # Public listing for faculties (missing - client often calls /faculties)
 @public_router.get('/faculties')
 async def public_list_faculties() -> Any:
-    docs = list_docs('faculties', where=[('is_deleted','==',False)], limit=1000)
-    return docs
+    return _public_list('faculties', limit=1000)
 
 
 # Public listing for students and teachers (used by mobile admin lists)
 @public_router.get('/students')
 async def public_list_students() -> Any:
-    docs = list_docs('students', where=[('is_deleted','==',False)], limit=2000)
-    return docs
+    return _public_list('students', limit=2000)
 
 
 @public_router.get('/teachers')
 async def public_list_teachers() -> Any:
-    # Return all teachers where is_deleted is not True (handles documents missing the flag)
-    docs = list_docs('teachers', limit=2000)
-    try:
-        visible = [d for d in docs if not (d.get('is_deleted', False))]
-    except Exception:
-        # Fallback: if docs are not a list or unexpected shape, return as-is
-        visible = docs
-    return visible
+    return _public_list('teachers', limit=2000)
+
+
+@public_router.get('/ues')
+async def list_ues() -> Any:
+    return _public_list('ues', limit=2000)
+
+
+@public_router.get('/departments')
+async def list_departments() -> Any:
+    return _public_list('departments', limit=2000)
+
+
+@public_router.get('/programs')
+async def list_programs() -> Any:
+    return _public_list('programs', limit=2000)
+
+
+@public_router.get('/promotions')
+async def list_promotions() -> Any:
+    return _public_list('promotions', limit=2000)
 
 
 # UE / Courses
@@ -313,12 +339,6 @@ async def create_ue(payload: dict, current_user: User = Depends(require_permissi
 async def delete_ue(ue_id: str, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
     update_doc('ues', ue_id, {'is_deleted': True})
     return {'message': 'UE supprimée'}
-
-
-@public_router.get('/ues')
-async def list_ues() -> Any:
-    docs = list_docs('ues', where=[('is_deleted','==',False)], limit=2000)
-    return docs
 
 
 # Departments
@@ -337,12 +357,6 @@ async def delete_department(dept_id: str, current_user: User = Depends(require_p
     return {'message': 'Département supprimé'}
 
 
-@public_router.get('/departments')
-async def list_departments() -> Any:
-    docs = list_docs('departments', where=[('is_deleted','==',False)], limit=2000)
-    return docs
-
-
 # Programs (Filières)
 @router.post('/programs/create')
 async def create_program(payload: ProgramCreate, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
@@ -359,12 +373,6 @@ async def delete_program(program_id: str, current_user: User = Depends(require_p
     return {'message': 'Filière supprimée'}
 
 
-@public_router.get('/programs')
-async def list_programs() -> Any:
-    docs = list_docs('programs', where=[('is_deleted','==',False)], limit=2000)
-    return docs
-
-
 # Promotions
 @router.post('/promotions/create')
 async def create_promotion(payload: PromotionCreate, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
@@ -379,12 +387,6 @@ async def create_promotion(payload: PromotionCreate, current_user: User = Depend
 async def delete_promotion(promotion_id: str, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
     update_doc('promotions', promotion_id, {'is_deleted': True})
     return {'message': 'Promotion supprimée'}
-
-
-@public_router.get('/promotions')
-async def list_promotions() -> Any:
-    docs = list_docs('promotions', where=[('is_deleted','==',False)], limit=2000)
-    return docs
 
 
 # Enrollments (inscriptions)

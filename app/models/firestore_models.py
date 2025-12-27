@@ -230,6 +230,18 @@ def list_docs(collection: str, where: Optional[List[tuple]] = None, limit: Optio
     return out
 
 
+def public_list(collection: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+    """Return documents for public listings, excluding documents where is_deleted == True.
+    This helper centralizes the behavior so endpoints include older docs missing the flag.
+    """
+    docs = list_docs(collection, limit=limit)
+    try:
+        visible = [d for d in docs if not d.get('is_deleted', False)]
+    except Exception:
+        visible = docs
+    return visible
+
+
 # Small utility to convert a Firestore doc dict to a model instance
 def doc_to_model(model_cls: Type[T], doc: Dict[str, Any]) -> T:
     return model_cls.parse_obj(doc)
@@ -256,5 +268,6 @@ __all__ = [
     "update_doc",
     "delete_doc",
     "list_docs",
+    "public_list",
     "doc_to_model",
 ]

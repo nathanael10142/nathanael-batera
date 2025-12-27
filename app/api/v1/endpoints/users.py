@@ -10,7 +10,7 @@ import string
 
 # Imports pour la sécurité et les modèles
 from app.core.security import get_current_active_user, require_permission, Permissions
-from app.models.firestore_models import create_doc, get_doc, update_doc, list_docs
+from app.models.firestore_models import create_doc, get_doc, update_doc, list_docs, public_list
 from app.schemas.user import User as UserSchema
 
 router = APIRouter()
