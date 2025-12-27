@@ -225,6 +225,7 @@ async def import_teachers_csv(
             teacher_doc = {
                 'full_name': full_name,
                 'email': email,
+                'is_deleted': False,
                 'created_at': __import__('datetime').datetime.utcnow().isoformat(),
             }
             tid = create_doc('teachers', teacher_doc)
@@ -492,6 +493,8 @@ async def create_student(payload: dict, current_user: User = Depends(require_per
 async def create_teacher(payload: dict, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))) -> Any:
     data = payload.copy()
     data.setdefault('created_at', __import__('datetime').datetime.utcnow().isoformat())
+    # Ensure created teacher is visible in public listings
+    data.setdefault('is_deleted', False)
     tid = create_doc('teachers', data)
     # create a lightweight user record for the teacher for auth/lookup
     try:
@@ -526,6 +529,7 @@ async def public_create_student(payload: dict, current_user: User = Depends(requ
 async def public_create_teacher(payload: dict, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
     data = payload.copy()
     data.setdefault('created_at', __import__('datetime').datetime.utcnow().isoformat())
+    data.setdefault('is_deleted', False)
     tid = create_doc('teachers', data)
     try:
         email = data.get('email')
