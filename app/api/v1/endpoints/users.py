@@ -1,9 +1,14 @@
 """
 Routes pour la gestion des utilisateurs (création, etc.)
 """
-from fastapi import APIRouter, HTTPException, Body
+from typing import List
+from fastapi import APIRouter, HTTPException, Body, Depends
 from firebase_admin import auth, firestore
 from pydantic import BaseModel, EmailStr
+
+# Imports pour la sécurité et les modèles
+from app.core.security import get_current_active_user, require_permission, Permissions
+from app.schemas.user import User as UserSchema
 
 router = APIRouter()
 
@@ -13,7 +18,7 @@ class UserCreate(BaseModel):
     full_name: str | None = None
     role: str = "student" # Rôle par défaut
 
-@router.post("/", status_code=201)
+@router.post("/", status_code=201, summary="Create a new user")
 async def create_user(user_in: UserCreate):
     """
     Créer un nouvel utilisateur dans Firebase Auth et un profil dans Firestore.I
@@ -55,3 +60,24 @@ async def create_user(user_in: UserCreate):
             detail=f"Une erreur est survenue lors de la création de l'utilisateur: {e}"
         )
 
+@router.get("/", response_model=List[UserSchema], summary="List all users (Admin only)")
+async def read_users(
+    current_user: UserSchema = Depends(require_permission(Permissions.ADMIN_MANAGE_USERS)),
+    limit: int = 100
+):
+    """
+    Récupère une liste de tous les utilisateurs depuis Firestore.
+    Cette route est protégée et accessible uniquement par les administrateurs.
+    """
+    try:
+        db = firestore.client()
+        users_ref = db.collection("users").limit(limit).stream()
+        
+        users_list = []
+        for doc in users_ref:
+            user_data = doc.to_dict()
+            users_list.append(UserSchema(**user_data))
+            
+        return users_list
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"An error occurred while fetching users: {e}")

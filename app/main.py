@@ -95,7 +95,8 @@ if settings.DEBUG:
         "http://127.0.0.1:8000",
         "http://localhost:52551", # Ajout pour le client Flutter en dev
         "http://localhost:8000",
-        "http://localhost:56910", # Ajouté: port utilisé par le client web local
+        "http://localhost:56910", # Port utilisé par le client web local
+        "http://localhost:49918", # Port dynamique du client web Flutter
     ]
 else:
     raw = getattr(settings, 'BACKEND_CORS_ORIGINS', None)
