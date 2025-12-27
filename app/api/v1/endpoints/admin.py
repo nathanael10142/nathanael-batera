@@ -228,14 +228,20 @@ async def import_teachers_csv(
                 'created_at': __import__('datetime').datetime.utcnow().isoformat(),
             }
             tid = create_doc('teachers', teacher_doc)
-            user_doc = {
-                'username': (email.split('@')[0] if email else f'teacher{tid}'),
-                'email': email,
-                'role': 'teacher',
-                'teacher_id': tid,
-                'created_at': __import__('datetime').datetime.utcnow().isoformat(),
-            }
-            create_doc('users', user_doc)
+            # create a lightweight user record for the teacher for auth/lookup
+            try:
+                created_teacher = get_doc('teachers', tid) or {}
+                user_doc = {
+                    'username': (email.split('@')[0] if email else f'teacher{tid}'),
+                    'email': email,
+                    'role': 'teacher',
+                    'teacher_id': tid,
+                    'created_at': __import__('datetime').datetime.utcnow().isoformat(),
+                }
+                create_doc('users', user_doc)
+            except Exception:
+                # don't fail teacher creation if user creation fails
+                pass
             created += 1
         except Exception as e:
             errors.append(str(e))
@@ -413,6 +419,37 @@ async def admin_update_document(collection: str, doc_id: str, payload: dict, cur
         update_doc(collection, doc_id, payload)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+    # If updating a teacher, propagate certain fields to the associated user record(s)
+    if collection == 'teachers':
+        try:
+            # find users linked to this teacher (teacher_id)
+            users = list_docs('users', where=[('teacher_id', '==', str(doc_id))], limit=50)
+            for u in users:
+                u_updates = {}
+                if 'email' in payload:
+                    u_updates['email'] = payload.get('email')
+                    # also update username if empty or derived
+                    if payload.get('email'):
+                        u_updates['username'] = payload.get('email').split('@')[0]
+                if 'full_name' in payload:
+                    # split full_name into first/last if desired; keep full_name in users meta
+                    u_updates.setdefault('first_name', None)
+                    u_updates.setdefault('last_name', None)
+                    try:
+                        parts = str(payload.get('full_name', '')).split(' ', 1)
+                        u_updates['first_name'] = parts[0]
+                        if len(parts) > 1:
+                            u_updates['last_name'] = parts[1]
+                    except Exception:
+                        pass
+                if u_updates:
+                    try:
+                        update_doc('users', u['id'], u_updates)
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+
     return {'id': doc_id, 'data': get_doc(collection, doc_id)}
 
 @router.delete('/{collection}/{doc_id}')
@@ -427,6 +464,17 @@ async def admin_delete_document(collection: str, doc_id: str, current_user: User
             delete_doc(collection, doc_id)
         except Exception as e:
             raise HTTPException(status_code=400, detail=str(e))
+    # If deleting a teacher, mark related user accounts as inactive
+    if collection == 'teachers':
+        try:
+            linked = list_docs('users', where=[('teacher_id', '==', str(doc_id))], limit=50)
+            for u in linked:
+                try:
+                    update_doc('users', u['id'], {'is_active': False, 'is_deleted': True})
+                except Exception:
+                    continue
+        except Exception:
+            pass
     return {'message': f'{collection} {doc_id} deleted'}
 
 # --- Students & Teachers create endpoints (admin) ---
@@ -441,10 +489,25 @@ async def create_student(payload: dict, current_user: User = Depends(require_per
     return {'id': sid, 'data': get_doc('students', sid)}
 
 @router.post('/teachers/create')
-async def create_teacher(payload: dict, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
+async def create_teacher(payload: dict, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY)):
     data = payload.copy()
     data.setdefault('created_at', __import__('datetime').datetime.utcnow().isoformat())
     tid = create_doc('teachers', data)
+    # create a lightweight user record for the teacher for auth/lookup
+    try:
+        created_teacher = get_doc('teachers', tid) or {}
+        email = data.get('email') or created_teacher.get('email')
+        user_doc = {
+            'username': (email.split('@')[0] if email else f'teacher{tid}'),
+            'email': email,
+            'role': 'teacher',
+            'teacher_id': tid,
+            'created_at': __import__('datetime').datetime.utcnow().isoformat(),
+        }
+        create_doc('users', user_doc)
+    except Exception:
+        # don't fail teacher creation if user creation fails
+        pass
     return {'id': tid, 'data': get_doc('teachers', tid)}
 
 
@@ -464,4 +527,16 @@ async def public_create_teacher(payload: dict, current_user: User = Depends(requ
     data = payload.copy()
     data.setdefault('created_at', __import__('datetime').datetime.utcnow().isoformat())
     tid = create_doc('teachers', data)
+    try:
+        email = data.get('email')
+        user_doc = {
+            'username': (email.split('@')[0] if email else f'teacher{tid}'),
+            'email': email,
+            'role': 'teacher',
+            'teacher_id': tid,
+            'created_at': __import__('datetime').datetime.utcnow().isoformat(),
+        }
+        create_doc('users', user_doc)
+    except Exception:
+        pass
     return {'id': tid, 'data': get_doc('teachers', tid)}
