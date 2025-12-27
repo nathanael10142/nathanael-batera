@@ -610,3 +610,26 @@ async def public_create_teacher(payload: dict, current_user: User = Depends(requ
     except Exception:
         logging.exception('Failed to create linked user for teacher (public)')
     return {'id': tid, 'data': created}
+
+
+@public_router.get('/debug/firestore')
+async def debug_firestore_info(current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
+    """Debug helper: return Firestore project id and counts for key collections.
+    Protected to admins to avoid exposing project details publicly.
+    """
+    try:
+        db = firestore.client()
+        project = getattr(db, 'project', None)
+    except Exception as e:
+        logging.exception('Failed to obtain Firestore client')
+        return {'ok': False, 'error': str(e)}
+
+    collections = ['faculties', 'programs', 'promotions', 'ues', 'groups', 'students', 'teachers', 'departments', 'users']
+    counts = {}
+    for c in collections:
+        try:
+            docs = list_docs(c, limit=5000)
+            counts[c] = len(docs)
+        except Exception as e:
+            counts[c] = f'error: {e}'
+    return {'ok': True, 'project': project, 'counts': counts}
