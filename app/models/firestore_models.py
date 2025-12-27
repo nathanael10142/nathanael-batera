@@ -6,6 +6,7 @@ and provide simple CRUD helpers used by the rest of the codebase.
 from typing import Any, Dict, List, Optional, Type, TypeVar
 from pydantic import BaseModel, Field
 from datetime import datetime
+import logging
 
 T = TypeVar("T", bound="FirestoreModel")
 
@@ -177,13 +178,26 @@ except Exception:  # pragma: no cover - allows importing without firebase during
 def _get_client():
     if firestore is None:
         raise RuntimeError("firebase_admin.firestore is not available. Initialize Firebase before using these helpers.")
+    try:
+        # ensure firebase app is initialized; if not this will raise a helpful error
+        import firebase_admin
+        if not getattr(firebase_admin, '_apps', None):
+            raise RuntimeError("Firebase Admin SDK not initialized. Call initialize_firebase() on startup and ensure credentials are provided.")
+    except Exception:
+        # if firebase_admin import fails, rely on earlier check
+        pass
     return firestore.client()
 
 
 def create_doc(collection: str, data: Dict[str, Any]) -> str:
     db = _get_client()
     ref = db.collection(collection).document()
-    ref.set(data)
+    try:
+        ref.set(data)
+    except Exception as e:
+        logging.exception("Failed to create document in collection '%s'", collection)
+        # raise a clear runtime error so caller (FastAPI) returns 500 and client sees failure
+        raise RuntimeError(f"Failed to create document in {collection}: {e}")
     return ref.id
 
 
@@ -201,13 +215,21 @@ def get_doc(collection: str, doc_id: str) -> Optional[Dict[str, Any]]:
 def update_doc(collection: str, doc_id: str, data: Dict[str, Any]) -> None:
     db = _get_client()
     ref = db.collection(collection).document(str(doc_id))
-    ref.update(data)
+    try:
+        ref.update(data)
+    except Exception as e:
+        logging.exception("Failed to update document %s/%s", collection, doc_id)
+        raise RuntimeError(f"Failed to update document {collection}/{doc_id}: {e}")
 
 
 def delete_doc(collection: str, doc_id: str) -> None:
     db = _get_client()
     ref = db.collection(collection).document(str(doc_id))
-    ref.delete()
+    try:
+        ref.delete()
+    except Exception as e:
+        logging.exception("Failed to delete document %s/%s", collection, doc_id)
+        raise RuntimeError(f"Failed to delete document {collection}/{doc_id}: {e}")
 
 
 def list_docs(collection: str, where: Optional[List[tuple]] = None, limit: Optional[int] = None) -> List[Dict[str, Any]]:

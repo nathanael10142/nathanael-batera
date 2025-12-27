@@ -130,8 +130,16 @@ async def create_faculty_from_scratch(
     # default flags
     data.setdefault("is_active", True)
     data.setdefault("is_deleted", False)
-    faculty_id = create_doc("faculties", data)
+    try:
+        faculty_id = create_doc("faculties", data)
+    except Exception as e:
+        logging.exception("Failed to create faculty via create_doc")
+        raise HTTPException(status_code=500, detail=f"Failed to create faculty: {e}")
+
     created = get_doc("faculties", faculty_id)
+    if not created:
+        logging.error("create_faculty_from_scratch: create_doc returned id=%s but get_doc returned None", faculty_id)
+        raise HTTPException(status_code=500, detail="Faculty creation reported success but document not found. Check Firebase initialization/credentials.")
     return FacultyOut(**created)
 
 
@@ -265,8 +273,16 @@ async def create_group(
 ) -> Any:
     data = payload.copy()
     data.setdefault('created_at', __import__('datetime').datetime.utcnow().isoformat())
-    gid = create_doc('groups', data)
-    return {'id': gid, 'data': get_doc('groups', gid)}
+    try:
+        gid = create_doc('groups', data)
+    except Exception as e:
+        logging.exception('Failed to create group')
+        raise HTTPException(status_code=500, detail=f'Failed to create group: {e}')
+    created = get_doc('groups', gid)
+    if not created:
+        logging.error("create_group: create_doc returned id=%s but get_doc returned None", gid)
+        raise HTTPException(status_code=500, detail='Group creation reported success but document not found. Check Firebase credentials.')
+    return {'id': gid, 'data': created}
 
 
 @router.delete('/groups/{group_id}')
@@ -322,8 +338,16 @@ async def list_promotions() -> Any:
 async def create_ue(payload: dict, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
     data = payload.copy()
     data.setdefault('created_at', __import__('datetime').datetime.utcnow().isoformat())
-    uid = create_doc('ues', data)
-    return {'id': uid, 'data': get_doc('ues', uid)}
+    try:
+        uid = create_doc('ues', data)
+    except Exception as e:
+        logging.exception('Failed to create UE')
+        raise HTTPException(status_code=500, detail=f'Failed to create UE: {e}')
+    created = get_doc('ues', uid)
+    if not created:
+        logging.error("create_ue: create_doc returned id=%s but get_doc returned None", uid)
+        raise HTTPException(status_code=500, detail='UE creation reported success but document not found. Check Firebase credentials.')
+    return {'id': uid, 'data': created}
 
 
 @router.delete('/ues/{ue_id}')
@@ -338,8 +362,16 @@ async def create_department(payload: DepartmentCreate, current_user: User = Depe
     data = payload.dict()
     data.setdefault('is_active', True)
     data.setdefault('is_deleted', False)
-    did = create_doc('departments', data)
-    return {'id': did, 'data': get_doc('departments', did)}
+    try:
+        did = create_doc('departments', data)
+    except Exception as e:
+        logging.exception('Failed to create department')
+        raise HTTPException(status_code=500, detail=f'Failed to create department: {e}')
+    created = get_doc('departments', did)
+    if not created:
+        logging.error("create_department: create_doc returned id=%s but get_doc returned None", did)
+        raise HTTPException(status_code=500, detail='Department creation reported success but document not found. Check Firebase credentials.')
+    return {'id': did, 'data': created}
 
 
 @router.delete('/departments/{dept_id}')
@@ -354,8 +386,16 @@ async def create_program(payload: ProgramCreate, current_user: User = Depends(re
     data = payload.dict()
     data.setdefault('is_active', True)
     data.setdefault('is_deleted', False)
-    pid = create_doc('programs', data)
-    return {'id': pid, 'data': get_doc('programs', pid)}
+    try:
+        pid = create_doc('programs', data)
+    except Exception as e:
+        logging.exception('Failed to create program')
+        raise HTTPException(status_code=500, detail=f'Failed to create program: {e}')
+    created = get_doc('programs', pid)
+    if not created:
+        logging.error("create_program: create_doc returned id=%s but get_doc returned None", pid)
+        raise HTTPException(status_code=500, detail='Program creation reported success but document not found. Check Firebase credentials.')
+    return {'id': pid, 'data': created}
 
 
 @router.delete('/programs/{program_id}')
@@ -370,14 +410,16 @@ async def create_promotion(payload: PromotionCreate, current_user: User = Depend
     data = payload.dict()
     data.setdefault('is_active', True)
     data.setdefault('is_deleted', False)
-    prid = create_doc('promotions', data)
-    return {'id': prid, 'data': get_doc('promotions', prid)}
-
-
-@router.delete('/promotions/{promotion_id}')
-async def delete_promotion(promotion_id: str, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
-    update_doc('promotions', promotion_id, {'is_deleted': True})
-    return {'message': 'Promotion supprimée'}
+    try:
+        prid = create_doc('promotions', data)
+    except Exception as e:
+        logging.exception('Failed to create promotion')
+        raise HTTPException(status_code=500, detail=f'Failed to create promotion: {e}')
+    created = get_doc('promotions', prid)
+    if not created:
+        logging.error("create_promotion: create_doc returned id=%s but get_doc returned None", prid)
+        raise HTTPException(status_code=500, detail='Promotion creation reported success but document not found. Check Firebase credentials.')
+    return {'id': prid, 'data': created}
 
 
 # Enrollments (inscriptions)
@@ -385,22 +427,16 @@ async def delete_promotion(promotion_id: str, current_user: User = Depends(requi
 async def create_enrollment(payload: EnrollmentCreate, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
     data = payload.dict()
     data.setdefault('status', 'enrolled')
-    eid = create_doc('enrollments', data)
-    return {'id': eid, 'data': get_doc('enrollments', eid)}
-
-
-@router.get('/enrollments/{enrollment_id}')
-async def get_enrollment(enrollment_id: str, current_user: User = Depends(get_current_active_user)):
-    doc = get_doc('enrollments', enrollment_id)
-    if not doc:
-        raise HTTPException(status_code=404, detail='Inscription introuvable')
-    return doc
-
-
-@router.delete('/enrollments/{enrollment_id}')
-async def delete_enrollment(enrollment_id: str, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
-    update_doc('enrollments', enrollment_id, {'status': 'cancelled'})
-    return {'message': 'Inscription annulée'}
+    try:
+        eid = create_doc('enrollments', data)
+    except Exception as e:
+        logging.exception('Failed to create enrollment')
+        raise HTTPException(status_code=500, detail=f'Failed to create enrollment: {e}')
+    created = get_doc('enrollments', eid)
+    if not created:
+        logging.error("create_enrollment: create_doc returned id=%s but get_doc returned None", eid)
+        raise HTTPException(status_code=500, detail='Enrollment creation reported success but document not found. Check Firebase credentials.')
+    return {'id': eid, 'data': created}
 
 
 # --- Additional admin CRUD endpoints (single-get / update) ---
@@ -485,8 +521,16 @@ async def create_student(payload: dict, current_user: User = Depends(require_per
     data.setdefault('created_at', __import__('datetime').datetime.utcnow().isoformat())
     raw_matricule = data.get('matricule')
     data['matricule'] = _ensure_unique_matricule(raw_matricule) if raw_matricule else _ensure_unique_matricule()
-    sid = create_doc('students', data)
-    return {'id': sid, 'data': get_doc('students', sid)}
+    try:
+        sid = create_doc('students', data)
+    except Exception as e:
+        logging.exception('Failed to create student')
+        raise HTTPException(status_code=500, detail=f'Failed to create student: {e}')
+    created = get_doc('students', sid)
+    if not created:
+        logging.error("create_student: create_doc returned id=%s but get_doc returned None", sid)
+        raise HTTPException(status_code=500, detail='Student creation reported success but document not found. Check Firebase credentials.')
+    return {'id': sid, 'data': created}
 
 @router.post('/teachers/create')
 async def create_teacher(payload: dict, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))) -> Any:
@@ -494,11 +538,18 @@ async def create_teacher(payload: dict, current_user: User = Depends(require_per
     data.setdefault('created_at', __import__('datetime').datetime.utcnow().isoformat())
     # Ensure created teacher is visible in public listings
     data.setdefault('is_deleted', False)
-    tid = create_doc('teachers', data)
+    try:
+        tid = create_doc('teachers', data)
+    except Exception as e:
+        logging.exception('Failed to create teacher')
+        raise HTTPException(status_code=500, detail=f'Failed to create teacher: {e}')
+    created = get_doc('teachers', tid)
+    if not created:
+        logging.error("create_teacher: create_doc returned id=%s but get_doc returned None", tid)
+        raise HTTPException(status_code=500, detail='Teacher creation reported success but document not found. Check Firebase credentials.')
     # create a lightweight user record for the teacher for auth/lookup
     try:
-        created_teacher = get_doc('teachers', tid) or {}
-        email = data.get('email') or created_teacher.get('email')
+        email = data.get('email') or created.get('email')
         user_doc = {
             'username': (email.split('@')[0] if email else f'teacher{tid}'),
             'email': email,
@@ -509,8 +560,8 @@ async def create_teacher(payload: dict, current_user: User = Depends(require_per
         create_doc('users', user_doc)
     except Exception:
         # don't fail teacher creation if user creation fails
-        pass
-    return {'id': tid, 'data': get_doc('teachers', tid)}
+        logging.exception('Failed to create linked user for teacher')
+    return {'id': tid, 'data': created}
 
 
 # Accept POST /api/v1/students/create (alternate path) but still require admin
@@ -521,15 +572,31 @@ async def public_create_student(payload: dict, current_user: User = Depends(requ
     data.setdefault('created_at', __import__('datetime').datetime.utcnow().isoformat())
     raw_matricule = data.get('matricule')
     data['matricule'] = _ensure_unique_matricule(raw_matricule) if raw_matricule else _ensure_unique_matricule()
-    sid = create_doc('students', data)
-    return {'id': sid, 'data': get_doc('students', sid)}
+    try:
+        sid = create_doc('students', data)
+    except Exception as e:
+        logging.exception('Failed to create student (public)')
+        raise HTTPException(status_code=500, detail=f'Failed to create student: {e}')
+    created = get_doc('students', sid)
+    if not created:
+        logging.error("public_create_student: create_doc returned id=%s but get_doc returned None", sid)
+        raise HTTPException(status_code=500, detail='Student creation reported success but document not found. Check Firebase credentials.')
+    return {'id': sid, 'data': created}
 
 @public_router.post('/teachers/create')
 async def public_create_teacher(payload: dict, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
     data = payload.copy()
     data.setdefault('created_at', __import__('datetime').datetime.utcnow().isoformat())
     data.setdefault('is_deleted', False)
-    tid = create_doc('teachers', data)
+    try:
+        tid = create_doc('teachers', data)
+    except Exception as e:
+        logging.exception('Failed to create teacher (public)')
+        raise HTTPException(status_code=500, detail=f'Failed to create teacher: {e}')
+    created = get_doc('teachers', tid)
+    if not created:
+        logging.error("public_create_teacher: create_doc returned id=%s but get_doc returned None", tid)
+        raise HTTPException(status_code=500, detail='Teacher creation reported success but document not found. Check Firebase credentials.')
     try:
         email = data.get('email')
         user_doc = {
@@ -541,5 +608,5 @@ async def public_create_teacher(payload: dict, current_user: User = Depends(requ
         }
         create_doc('users', user_doc)
     except Exception:
-        pass
-    return {'id': tid, 'data': get_doc('teachers', tid)}
+        logging.exception('Failed to create linked user for teacher (public)')
+    return {'id': tid, 'data': created}
