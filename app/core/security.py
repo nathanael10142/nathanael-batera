@@ -128,13 +128,16 @@ async def get_current_user(
         else:
             role_name = role_val
 
-        role_obj = SimpleNamespace(name=role_name) if role_name else None
-
+        # **CORRECTION : Construire un objet qui correspond au UserSchema**
+        # Le schéma attend 'username' et un 'role' de type string, pas un objet.
         user = SimpleNamespace(
             id=str(firebase_user_record.uid),
+            # Utiliser le display_name de Firestore comme 'username'
+            username=user_data.get('display_name') or user_data.get('username') or firebase_user_record.email.split('@')[0],
             email=firebase_user_record.email,
             is_active=not getattr(firebase_user_record, 'disabled', False),
-            role=role_obj,
+            # Passer directement la chaîne de caractères du rôle
+            role=role_name,
             raw=user_data
         )
 
