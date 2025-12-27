@@ -10,6 +10,7 @@ import string
 
 # Imports pour la sécurité et les modèles
 from app.core.security import get_current_active_user, require_permission, Permissions
+from app.models.firestore_models import create_doc, get_doc, update_doc, list_docs
 from app.schemas.user import User as UserSchema
 
 router = APIRouter()
@@ -38,115 +39,89 @@ def generate_random_password(length: int = 12) -> str:
 @router.post("", status_code=201, summary="Create a new user")
 async def create_user(user_in: UserCreate):
     """
-    Créer un nouvel utilisateur dans Firebase Auth et un profil dans Firestore.I
+    Créer un nouvel utilisateur dans Firebase Auth et un profil dans Firestore.
     """
     try:
         # 1. Créer l'utilisateur dans Firebase Authentication
         user_record = auth.create_user(
             email=user_in.email,
-            # Utiliser le mot de passe fourni ou en générer un
             password=user_in.password or generate_random_password(),
-            display_name=f"{user_in.first_name or ''} {user_in.last_name or ''}".strip()
+            display_name=f"{user_in.first_name or ''} {user_in.last_name or ''}".strip(),
         )
 
         # 2. Créer un document de profil utilisateur dans Firestore
-        db = firestore.client()
-        full_name = f"{user_in.first_name or ''} {user_in.last_name or ''}".strip()
         user_profile_data = {
-            "firebase_uid": user_record.uid, # Utiliser firebase_uid pour la cohérence
+            "firebase_uid": user_record.uid,
             "email": user_in.email,
-            "display_name": full_name,
+            "display_name": f"{user_in.first_name or ''} {user_in.last_name or ''}".strip(),
             "first_name": user_in.first_name,
             "last_name": user_in.last_name,
             "role": user_in.role,
             "created_at": firestore.SERVER_TIMESTAMP,
             "is_active": True,
         }
+        # Use create_doc helper when using auto-doc id; but here we use uid as id
+        db = firestore.client()
         db.collection("users").document(user_record.uid).set(user_profile_data, merge=True)
 
-        return {
-            "message": "Utilisateur créé avec succès",
-            "uid": user_record.uid,
-            "email": user_record.email
-        }
+        return {"message": "Utilisateur créé avec succès", "uid": user_record.uid, "email": user_record.email}
 
     except auth.EmailAlreadyExistsError:
-        raise HTTPException(
-            status_code=400,
-            detail=f"L'email '{user_in.email}' est déjà utilisé par un autre compte."
-        )
+        raise HTTPException(status_code=400, detail=f"L'email '{user_in.email}' est déjà utilisé par un autre compte.")
     except Exception as e:
-        # Pour les autres erreurs potentielles de Firebase
-        raise HTTPException(
-            status_code=500,
-            detail=f"Une erreur est survenue lors de la création de l'utilisateur: {e}"
-        )
+        raise HTTPException(status_code=500, detail=f"Une erreur est survenue lors de la création de l'utilisateur: {e}")
+
 
 @router.get("", response_model=List[UserSchema], summary="List all users (Admin only)")
 async def read_users(
     current_user: UserSchema = Depends(require_permission(Permissions.ADMIN_MANAGE_USERS)),
-    limit: int = 100
+    limit: int = 100,
 ):
     """
     Récupère une liste de tous les utilisateurs depuis Firestore.
-    Cette route est protégée et accessible uniquement par les administrateurs.
     """
     try:
-        db = firestore.client()
-        users_ref = db.collection("users").limit(limit).stream()
-        
+        docs = list_docs("users", limit=limit)
         users_list = []
-        for doc in users_ref:
-            user_data = doc.to_dict()
-            # **CORRECTION : Mapper les champs de Firestore vers le schéma Pydantic**
-            # Firestore a 'firebase_uid' et 'display_name', mais le schéma attend 'id' et 'username'.
-            if user_data:
-                mapped_data = {
-                    "id": user_data.get("firebase_uid") or user_data.get("uid") or doc.id,
-                    "username": user_data.get("display_name") or user_data.get("username") or "",
-                    "email": user_data.get("email", ""),
-                    "first_name": user_data.get("first_name"),
-                    "last_name": user_data.get("last_name"),
-                    "role": user_data.get("role", "unknown"),
-                    "is_active": user_data.get("is_active", True),
-                }
-                users_list.append(UserSchema(**mapped_data))
-            
+        for doc in docs:
+            mapped_data = {
+                "id": doc.get("firebase_uid") or doc.get("uid") or doc.get("id"),
+                "username": doc.get("display_name") or doc.get("username") or "",
+                "email": doc.get("email", ""),
+                "first_name": doc.get("first_name"),
+                "last_name": doc.get("last_name"),
+                "role": doc.get("role", "unknown"),
+                "is_active": doc.get("is_active", True),
+            }
+            users_list.append(UserSchema(**mapped_data))
         return users_list
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"An error occurred while fetching users: {e}")
 
+
 @router.get("/{user_id}", response_model=UserSchema, summary="Get a single user by ID")
-async def read_user(
-    user_id: str,
-    current_user: UserSchema = Depends(require_permission(Permissions.ADMIN_MANAGE_USERS))
-):
+async def read_user(user_id: str, current_user: UserSchema = Depends(require_permission(Permissions.ADMIN_MANAGE_USERS))):
     """Récupère les informations d'un utilisateur spécifique."""
     try:
-        db = firestore.client()
-        doc = db.collection("users").document(user_id).get()
-        if not doc.exists:
+        doc = get_doc("users", user_id)
+        if not doc:
             raise HTTPException(status_code=404, detail="User not found")
-        
-        user_data = doc.to_dict()
-        return UserSchema(
-            id=doc.id,
-            username=user_data.get("display_name", ""),
-            email=user_data.get("email", ""),
-            first_name=user_data.get("first_name"),
-            last_name=user_data.get("last_name"),
-            role=user_data.get("role", "unknown"),
-            is_active=user_data.get("is_active", True),
-        )
+        mapped = {
+            "id": doc.get("firebase_uid") or doc.get("uid") or doc.get("id"),
+            "username": doc.get("display_name", ""),
+            "email": doc.get("email", ""),
+            "first_name": doc.get("first_name"),
+            "last_name": doc.get("last_name"),
+            "role": doc.get("role", "unknown"),
+            "is_active": doc.get("is_active", True),
+        }
+        return UserSchema(**mapped)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"An error occurred while fetching user: {e}")
 
+
 @router.put("/{user_id}", response_model=UserSchema, summary="Update a user")
-async def update_user(
-    user_id: str,
-    user_in: UserUpdate,
-    current_user: UserSchema = Depends(require_permission(Permissions.ADMIN_MANAGE_USERS))
-) -> Any:
+async def update_user(user_id: str, user_in: UserUpdate, current_user: UserSchema = Depends(require_permission(Permissions.ADMIN_MANAGE_USERS))) -> Any:
     """Met à jour les informations d'un utilisateur dans Firestore et Firebase Auth."""
     db = firestore.client()
     user_ref = db.collection("users").document(user_id)
@@ -160,7 +135,7 @@ async def update_user(
         auth_updates["email"] = user_in.email
     if user_in.is_active is not None:
         auth_updates["disabled"] = not user_in.is_active
-    
+
     full_name = f"{user_in.first_name or ''} {user_in.last_name or ''}".strip()
     if full_name:
         auth_updates["display_name"] = full_name

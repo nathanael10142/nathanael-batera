@@ -154,6 +154,9 @@ api_router.include_router(grades.router, prefix="/grades", tags=["Grades & Delib
 api_router.include_router(finances.router, prefix="/finances", tags=["Finances & Accounting"])
 api_router.include_router(messages.router, prefix="/messages", tags=["Messaging"])
 
+# Expose lightweight public listing endpoints implemented in admin.public_router
+api_router.include_router(admin.public_router, prefix="", tags=["Public"])
+
 # On inclut le routeur principal dans l'application
 app.include_router(api_router, prefix=settings.API_V1_STR)
 

@@ -1,3 +1,5 @@
+# Archived: kept for reference only. No runtime usage.
+
 # Original SQLAlchemy models archived here for reference.
 from sqlalchemy import Column, String, Integer, ForeignKey, Boolean, Table, Text
 from sqlalchemy.orm import relationship

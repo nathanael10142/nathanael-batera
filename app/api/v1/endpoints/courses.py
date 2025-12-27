@@ -1,12 +1,11 @@
-from typing import Any, List
+from typing import Any
 from fastapi import APIRouter
-from firebase_admin import firestore
+from app.models.firestore_models import list_docs
 
 router = APIRouter()
 
 @router.get("/")
-async def read_courses() -> Any:
-    """Retrieve courses from Firestore"""
-    db = firestore.client()
-    docs = db.collection("courses").limit(200).stream()
-    return [d.to_dict() for d in docs]
+async def read_courses(limit: int = 200) -> Any:
+    """Retrieve courses from Firestore using helper"""
+    docs = list_docs("courses", limit=limit)
+    return docs

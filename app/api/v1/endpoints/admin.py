@@ -2,14 +2,53 @@
 Routes d'administration (création facultés, etc.)
 """
 from typing import Any, List
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from firebase_admin import firestore
+import io
+import csv
+import random
+import logging
 
 # Imports corrigés avec des chemins absolus
 from app.core.security import get_current_active_user, require_permission, Permissions
 from app.models import User # Faculty, Department, Option sont maintenant gérés via Firestore
+from app.models.firestore_models import Faculty as FacModel
+from app.schemas.firestore import (
+    FacultyCreate, FacultyOut, FacultyListResponse,
+    DepartmentCreate, DepartmentOut,
+    ProgramCreate, ProgramOut,
+    PromotionCreate, PromotionOut,
+    EnrollmentCreate, EnrollmentOut
+)
+from app.models.firestore_models import create_doc, get_doc, update_doc, delete_doc, list_docs
 
 router = APIRouter()
+
+# expose a small public router for GET-listing endpoints used by the mobile client
+public_router = APIRouter()
+
+
+def _generate_matricule() -> str:
+    # Simple matricule: YEAR + 6 random digits
+    return f"{__import__('datetime').datetime.now().year}{random.randint(100000, 999999)}"
+
+
+def _ensure_unique_matricule(candidate: str = None) -> str:
+    """Ensure matricule is unique in students collection; try few times before failing."""
+    if not candidate:
+        candidate = _generate_matricule()
+    # quick check
+    existing = list_docs('students', where=[('matricule', '==', candidate)], limit=1)
+    if not existing:
+        return candidate
+    # try regenerating
+    for _ in range(10):
+        candidate = _generate_matricule()
+        existing = list_docs('students', where=[('matricule', '==', candidate)], limit=1)
+        if not existing:
+            return candidate
+    logging.warning('Could not generate unique matricule after several attempts')
+    raise Exception('Failed to generate unique matricule')
 
 
 @router.post("/faculties/duplicate")
@@ -72,77 +111,267 @@ async def duplicate_faculty(
     }
 
 
-@router.post("/faculties/create")
+@router.post("/faculties/create", response_model=FacultyOut)
 async def create_faculty_from_scratch(
-    university_id: int,
-    name: str,
-    code: str,
+    payload: FacultyCreate,
     current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))
 ) -> Any:
     """
-    Créer une faculté vierge (sans structure)
+    Créer une faculté vierge (sans structure) — endpoint adapté à Firestore models
     """
-    db = firestore.client()
-    faculty_ref = db.collection("faculties").document()
-    faculty_data = {
-        "university_id": university_id,
-        "name": name,
-        "code": code,
-        "is_active": True,
-        "is_deleted": False
-    }
-    faculty_ref.set(faculty_data)
-
-    return {
-        "message": "Faculté créée",
-        "faculty_id": faculty_ref.id,
-        "faculty_name": name
-    }
+    data = payload.dict()
+    # default flags
+    data.setdefault("is_active", True)
+    data.setdefault("is_deleted", False)
+    faculty_id = create_doc("faculties", data)
+    created = get_doc("faculties", faculty_id)
+    return FacultyOut(**created)
 
 
-@router.get("/faculties")
+@router.get("/faculties", response_model=FacultyListResponse)
 async def list_all_faculties(
     current_user: User = Depends(get_current_active_user)
 ) -> Any:
     """
-    Lister toutes les facultés (pour admin)
+    Lister toutes les facultés (pour admin) — utilise helpers Firestore
     """
-    if not (current_user.role and current_user.role.name == "admin"):
+    if not (getattr(current_user, 'role', None) and getattr(current_user.role, 'name', None) == "admin"):
         raise HTTPException(status_code=403, detail="Permission refusée")
 
-    db = firestore.client()
-    faculties_stream = db.collection("faculties").where("is_deleted", "==", False).stream()
-
-    faculties_list = []
-    for f in faculties_stream:
-        faculty_data = f.to_dict()
-        faculties_list.append({
-            "id": f.id,
-            "name": faculty_data.get("name"),
-            "code": faculty_data.get("code")
-        })
-
-    return {
-        "total": len(faculties_list),
-        "faculties": faculties_list
-    }
+    docs = list_docs("faculties", where=[("is_deleted","==",False)], limit=500)
+    faculties = [FacultyOut(**d) for d in docs]
+    return FacultyListResponse(total=len(faculties), faculties=faculties)
 
 
 @router.delete("/faculties/{faculty_id}")
 async def deactivate_faculty(
-    faculty_id: int,
+    faculty_id: str,
     current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))
 ) -> Any:
     """
     Désactiver une faculté (soft delete)
     """
-    db = firestore.client()
-    faculty_ref = db.collection("faculties").document(str(faculty_id))
-    faculty = faculty_ref.get()
-
-    if not faculty.exists:
-        raise HTTPException(status_code=404, detail="Faculté introuvable")
-
-    faculty_ref.update({"is_active": False, "is_deleted": True})
-
+    # mark as deleted
+    update_doc("faculties", faculty_id, {"is_active": False, "is_deleted": True})
     return {"message": "Faculté désactivée"}
+
+
+@router.post('/students/import')
+async def import_students_csv(
+    file: UploadFile = File(...),
+    current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))
+) -> Any:
+    """Import students from CSV file (multipart/form-data, field name 'file').
+    The CSV should contain headers. We create documents in `students` collection and a minimal `users` entry.
+    """
+    content = await file.read()
+    try:
+        text = content.decode('utf-8')
+    except Exception:
+        text = content.decode('latin-1')
+
+    reader = csv.DictReader(io.StringIO(text))
+    created = 0
+    errors = []
+    for row in reader:
+        try:
+            full_name = (row.get('full_name') or row.get('name') or f"{row.get('first_name','') } {row.get('last_name','')}").strip()
+            email = row.get('email') or row.get('contact_email')
+            raw_matricule = row.get('matricule')
+            matricule = _ensure_unique_matricule(raw_matricule) if raw_matricule else _ensure_unique_matricule()
+            student_doc = {
+                'full_name': full_name,
+                'email': email,
+                'matricule': matricule,
+                'is_deleted': False,
+                'created_at': __import__('datetime').datetime.utcnow().isoformat(),
+            }
+            sid = create_doc('students', student_doc)
+            # Create a lightweight user record for auth/lookup
+            user_doc = {
+                'username': (email.split('@')[0] if email else matricule),
+                'email': email,
+                'role': 'student',
+                'student_id': sid,
+                'created_at': __import__('datetime').datetime.utcnow().isoformat(),
+            }
+            create_doc('users', user_doc)
+            created += 1
+        except Exception as e:
+            logging.exception('Error importing student row')
+            errors.append(str(e))
+            continue
+
+    return {'created': created, 'errors': errors}
+
+
+@router.post('/teachers/import')
+async def import_teachers_csv(
+    file: UploadFile = File(...),
+    current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))
+) -> Any:
+    content = await file.read()
+    try:
+        text = content.decode('utf-8')
+    except Exception:
+        text = content.decode('latin-1')
+    reader = csv.DictReader(io.StringIO(text))
+    created = 0
+    errors = []
+    for row in reader:
+        try:
+            full_name = row.get('full_name') or row.get('name') or f"{row.get('first_name','') } {row.get('last_name','')}".strip()
+            email = row.get('email')
+            teacher_doc = {
+                'full_name': full_name,
+                'email': email,
+                'created_at': __import__('datetime').datetime.utcnow().isoformat(),
+            }
+            tid = create_doc('teachers', teacher_doc)
+            user_doc = {
+                'username': (email.split('@')[0] if email else f'teacher{tid}'),
+                'email': email,
+                'role': 'teacher',
+                'teacher_id': tid,
+                'created_at': __import__('datetime').datetime.utcnow().isoformat(),
+            }
+            create_doc('users', user_doc)
+            created += 1
+        except Exception as e:
+            errors.append(str(e))
+            continue
+    return {'created': created, 'errors': errors}
+
+
+# Groups CRUD (admin) and public listing
+@router.post('/groups/create')
+async def create_group(
+    payload: dict,
+    current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))
+) -> Any:
+    data = payload.copy()
+    data.setdefault('created_at', __import__('datetime').datetime.utcnow().isoformat())
+    gid = create_doc('groups', data)
+    return {'id': gid, 'data': get_doc('groups', gid)}
+
+
+@router.delete('/groups/{group_id}')
+async def delete_group(group_id: str, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
+    update_doc('groups', group_id, {'is_deleted': True})
+    return {'message': 'Groupe supprimé'}
+
+
+@public_router.get('/groups')
+async def list_groups() -> Any:
+    docs = list_docs('groups', where=[('is_deleted','==',False)], limit=1000)
+    return docs
+
+
+# UE / Courses
+@router.post('/ues/create')
+async def create_ue(payload: dict, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
+    data = payload.copy()
+    data.setdefault('created_at', __import__('datetime').datetime.utcnow().isoformat())
+    uid = create_doc('ues', data)
+    return {'id': uid, 'data': get_doc('ues', uid)}
+
+
+@router.delete('/ues/{ue_id}')
+async def delete_ue(ue_id: str, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
+    update_doc('ues', ue_id, {'is_deleted': True})
+    return {'message': 'UE supprimée'}
+
+
+@public_router.get('/ues')
+async def list_ues() -> Any:
+    docs = list_docs('ues', where=[('is_deleted','==',False)], limit=2000)
+    return docs
+
+
+# Departments
+@router.post('/departments/create')
+async def create_department(payload: DepartmentCreate, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
+    data = payload.dict()
+    data.setdefault('is_active', True)
+    data.setdefault('is_deleted', False)
+    did = create_doc('departments', data)
+    return {'id': did, 'data': get_doc('departments', did)}
+
+
+@router.delete('/departments/{dept_id}')
+async def delete_department(dept_id: str, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
+    update_doc('departments', dept_id, {'is_deleted': True})
+    return {'message': 'Département supprimé'}
+
+
+@public_router.get('/departments')
+async def list_departments() -> Any:
+    docs = list_docs('departments', where=[('is_deleted','==',False)], limit=2000)
+    return docs
+
+
+# Programs (Filières)
+@router.post('/programs/create')
+async def create_program(payload: ProgramCreate, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
+    data = payload.dict()
+    data.setdefault('is_active', True)
+    data.setdefault('is_deleted', False)
+    pid = create_doc('programs', data)
+    return {'id': pid, 'data': get_doc('programs', pid)}
+
+
+@router.delete('/programs/{program_id}')
+async def delete_program(program_id: str, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
+    update_doc('programs', program_id, {'is_deleted': True})
+    return {'message': 'Filière supprimée'}
+
+
+@public_router.get('/programs')
+async def list_programs() -> Any:
+    docs = list_docs('programs', where=[('is_deleted','==',False)], limit=2000)
+    return docs
+
+
+# Promotions
+@router.post('/promotions/create')
+async def create_promotion(payload: PromotionCreate, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
+    data = payload.dict()
+    data.setdefault('is_active', True)
+    data.setdefault('is_deleted', False)
+    prid = create_doc('promotions', data)
+    return {'id': prid, 'data': get_doc('promotions', prid)}
+
+
+@router.delete('/promotions/{promotion_id}')
+async def delete_promotion(promotion_id: str, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
+    update_doc('promotions', promotion_id, {'is_deleted': True})
+    return {'message': 'Promotion supprimée'}
+
+
+@public_router.get('/promotions')
+async def list_promotions() -> Any:
+    docs = list_docs('promotions', where=[('is_deleted','==',False)], limit=2000)
+    return docs
+
+
+# Enrollments (inscriptions)
+@router.post('/enrollments/create')
+async def create_enrollment(payload: EnrollmentCreate, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
+    data = payload.dict()
+    data.setdefault('status', 'enrolled')
+    eid = create_doc('enrollments', data)
+    return {'id': eid, 'data': get_doc('enrollments', eid)}
+
+
+@router.get('/enrollments/{enrollment_id}')
+async def get_enrollment(enrollment_id: str, current_user: User = Depends(get_current_active_user)):
+    doc = get_doc('enrollments', enrollment_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail='Inscription introuvable')
+    return doc
+
+
+@router.delete('/enrollments/{enrollment_id}')
+async def delete_enrollment(enrollment_id: str, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
+    update_doc('enrollments', enrollment_id, {'status': 'cancelled'})
+    return {'message': 'Inscription annulée'}
