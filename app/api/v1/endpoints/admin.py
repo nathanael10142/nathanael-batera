@@ -20,7 +20,7 @@ from app.schemas.firestore import (
     PromotionCreate, PromotionOut,
     EnrollmentCreate, EnrollmentOut
 )
-from app.models.firestore_models import create_doc, get_doc, update_doc, delete_doc, list_docs
+from app.models.firestore_models import create_doc, get_doc, update_doc, delete_doc, list_docs, public_list
 
 router = APIRouter()
 
@@ -29,15 +29,10 @@ public_router = APIRouter()
 
 
 def _public_list(collection: str, limit: int = 2000):
-    """Helper: fetch documents for a public listing and exclude those with is_deleted == True.
-    This avoids excluding older documents that do not have the field.
+    """Helper wrapper: delegate to centralized public_list in firestore_models.
+    Ensures all public listing endpoints behave the same (includes older docs missing is_deleted).
     """
-    docs = list_docs(collection, limit=limit)
-    try:
-        visible = [d for d in docs if not d.get('is_deleted', False)]
-    except Exception:
-        visible = docs
-    return visible
+    return public_list(collection, limit=limit)
 
 
 def _generate_matricule() -> str:
@@ -145,17 +140,13 @@ async def list_all_faculties(
     current_user: User = Depends(get_current_active_user)
 ) -> Any:
     """
-    Lister toutes les facultés (pour admin) — utilise helpers Firestore
+    Lister toutes les facultés (pour admin) — utilise helper public_list pour inclure anciens documents.
     """
     if not (getattr(current_user, 'role', None) and getattr(current_user.role, 'name', None) == "admin"):
         raise HTTPException(status_code=403, detail="Permission refusée")
 
-    docs = list_docs("faculties", limit=500)
-    try:
-        visible_docs = [d for d in docs if not d.get('is_deleted', False)]
-    except Exception:
-        visible_docs = docs
-    faculties = [FacultyOut(**d) for d in visible_docs]
+    docs = public_list("faculties", limit=500)
+    faculties = [FacultyOut(**d) for d in docs]
     return FacultyListResponse(total=len(faculties), faculties=faculties)
 
 

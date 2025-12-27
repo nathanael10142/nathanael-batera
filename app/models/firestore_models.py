@@ -232,13 +232,21 @@ def list_docs(collection: str, where: Optional[List[tuple]] = None, limit: Optio
 
 def public_list(collection: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
     """Return documents for public listings, excluding documents where is_deleted == True.
-    This helper centralizes the behavior so endpoints include older docs missing the flag.
+    This helper centralizes the behavior so endpoints include older docs missing the is_deleted flag.
+    Adds logging to help diagnose empty-list issues.
     """
+    import logging
+    logger = logging.getLogger(__name__)
     docs = list_docs(collection, limit=limit)
     try:
         visible = [d for d in docs if not d.get('is_deleted', False)]
     except Exception:
         visible = docs
+    # Log counts for debugging when clients unexpectedly receive empty lists
+    try:
+        logger.debug(f"public_list: collection={collection} fetched={len(docs)} visible={len(visible)}")
+    except Exception:
+        pass
     return visible
 
 
