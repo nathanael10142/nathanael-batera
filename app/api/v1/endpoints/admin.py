@@ -267,6 +267,26 @@ async def list_groups() -> Any:
     return docs
 
 
+# Public listing for faculties (missing - client often calls /faculties)
+@public_router.get('/faculties')
+async def public_list_faculties() -> Any:
+    docs = list_docs('faculties', where=[('is_deleted','==',False)], limit=1000)
+    return docs
+
+
+# Public listing for students and teachers (used by mobile admin lists)
+@public_router.get('/students')
+async def public_list_students() -> Any:
+    docs = list_docs('students', where=[('is_deleted','==',False)], limit=2000)
+    return docs
+
+
+@public_router.get('/teachers')
+async def public_list_teachers() -> Any:
+    docs = list_docs('teachers', where=[('is_deleted','==',False)], limit=2000)
+    return docs
+
+
 # UE / Courses
 @router.post('/ues/create')
 async def create_ue(payload: dict, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
