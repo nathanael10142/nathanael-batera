@@ -76,7 +76,16 @@ async def read_users(
         users_list = []
         for doc in users_ref:
             user_data = doc.to_dict()
-            users_list.append(UserSchema(**user_data))
+            # **CORRECTION : Mapper les champs de Firestore vers le schéma Pydantic**
+            # Firestore a 'firebase_uid' et 'display_name', mais le schéma attend 'id' et 'username'.
+            if user_data:
+                mapped_data = {
+                    "id": user_data.get("firebase_uid") or user_data.get("uid") or doc.id,
+                    "username": user_data.get("display_name") or user_data.get("username", ""),
+                    "email": user_data.get("email", ""),
+                    "role": user_data.get("role", "unknown"),
+                }
+                users_list.append(UserSchema(**mapped_data))
             
         return users_list
     except Exception as e:
