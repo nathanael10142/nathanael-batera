@@ -489,7 +489,7 @@ async def create_student(payload: dict, current_user: User = Depends(require_per
     return {'id': sid, 'data': get_doc('students', sid)}
 
 @router.post('/teachers/create')
-async def create_teacher(payload: dict, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY)):
+async def create_teacher(payload: dict, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))) -> Any:
     data = payload.copy()
     data.setdefault('created_at', __import__('datetime').datetime.utcnow().isoformat())
     tid = create_doc('teachers', data)
