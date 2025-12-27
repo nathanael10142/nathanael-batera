@@ -395,3 +395,73 @@ async def get_enrollment(enrollment_id: str, current_user: User = Depends(get_cu
 async def delete_enrollment(enrollment_id: str, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
     update_doc('enrollments', enrollment_id, {'status': 'cancelled'})
     return {'message': 'Inscription annulée'}
+
+
+# --- Additional admin CRUD endpoints (single-get / update) ---
+@router.get('/{collection}/{doc_id}')
+async def admin_get_document(collection: str, doc_id: str, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
+    """Generic admin GET for a single document in any collection"""
+    doc = get_doc(collection, doc_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail=f"{collection} document not found")
+    return doc
+
+@router.put('/{collection}/{doc_id}')
+async def admin_update_document(collection: str, doc_id: str, payload: dict, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
+    """Generic admin update for documents"""
+    try:
+        update_doc(collection, doc_id, payload)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {'id': doc_id, 'data': get_doc(collection, doc_id)}
+
+@router.delete('/{collection}/{doc_id}')
+async def admin_delete_document(collection: str, doc_id: str, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
+    """Generic admin delete - soft delete where applicable"""
+    try:
+        # prefer soft delete flag if available
+        update_doc(collection, doc_id, {'is_deleted': True})
+    except Exception:
+        # fallback to hard delete if update not supported
+        try:
+            delete_doc(collection, doc_id)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    return {'message': f'{collection} {doc_id} deleted'}
+
+# --- Students & Teachers create endpoints (admin) ---
+@router.post('/students/create')
+async def create_student(payload: dict, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
+    data = payload.copy()
+    data.setdefault('is_deleted', False)
+    data.setdefault('created_at', __import__('datetime').datetime.utcnow().isoformat())
+    raw_matricule = data.get('matricule')
+    data['matricule'] = _ensure_unique_matricule(raw_matricule) if raw_matricule else _ensure_unique_matricule()
+    sid = create_doc('students', data)
+    return {'id': sid, 'data': get_doc('students', sid)}
+
+@router.post('/teachers/create')
+async def create_teacher(payload: dict, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
+    data = payload.copy()
+    data.setdefault('created_at', __import__('datetime').datetime.utcnow().isoformat())
+    tid = create_doc('teachers', data)
+    return {'id': tid, 'data': get_doc('teachers', tid)}
+
+
+# Accept POST /api/v1/students/create (alternate path) but still require admin
+@public_router.post('/students/create')
+async def public_create_student(payload: dict, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
+    data = payload.copy()
+    data.setdefault('is_deleted', False)
+    data.setdefault('created_at', __import__('datetime').datetime.utcnow().isoformat())
+    raw_matricule = data.get('matricule')
+    data['matricule'] = _ensure_unique_matricule(raw_matricule) if raw_matricule else _ensure_unique_matricule()
+    sid = create_doc('students', data)
+    return {'id': sid, 'data': get_doc('students', sid)}
+
+@public_router.post('/teachers/create')
+async def public_create_teacher(payload: dict, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
+    data = payload.copy()
+    data.setdefault('created_at', __import__('datetime').datetime.utcnow().isoformat())
+    tid = create_doc('teachers', data)
+    return {'id': tid, 'data': get_doc('teachers', tid)}
