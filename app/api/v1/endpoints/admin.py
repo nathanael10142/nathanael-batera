@@ -8,6 +8,8 @@ import io
 import csv
 import random
 import logging
+from fastapi import APIRouter, HTTPException
+from datetime import datetime, timedelta
 
 # Imports corrigés avec des chemins absolus
 from app.core.security import get_current_active_user, require_permission, Permissions
@@ -707,3 +709,38 @@ async def debug_firestore_info(current_user: User = Depends(require_permission(P
         except Exception as e:
             counts[c] = f'error: {e}'
     return {'ok': True, 'project': project, 'counts': counts}
+
+
+@router.get('/dashboard/summary')
+def dashboard_summary():
+    project = settings.PROJECT_ID
+    collections = ['faculties', 'programs', 'promotions', 'ues', 'departments', 'groups', 'students', 'teachers', 'users']
+    counts = {}
+    recent = {}
+    now = datetime.utcnow()
+    start = now - timedelta(days=6)
+
+    for col in collections:
+        docs = list_docs(col)
+        counts[col] = len(docs)
+        # build 7-day series based on created_at if present
+        series = [0] * 7
+        for d in docs:
+            created = None
+            if isinstance(d, dict):
+                created_at = d.get('created_at') or d.get('createdAt')
+                if created_at:
+                    try:
+                        created = datetime.fromisoformat(created_at)
+                    except Exception:
+                        created = None
+            if not created:
+                continue
+            if created < start or created > now:
+                continue
+            idx = (created.date() - start.date()).days
+            if 0 <= idx < 7:
+                series[idx] += 1
+        recent[col] = series
+
+    return {'ok': True, 'project': project, 'counts': counts, 'recent': recent}
