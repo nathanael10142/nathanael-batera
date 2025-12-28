@@ -20,6 +20,9 @@ def create_user(db: FirestoreClient, user_in: UserCreate) -> Dict[str, Any]:
     
     # 2. Préparer les données pour Firestore (sans le mot de passe)
     user_data = user_in.model_dump(exclude={"password"})
+    # Ensure role field exists and normalize
+    if 'role' not in user_data or not user_data.get('role'):
+        user_data['role'] = 'student'
     
     # 3. Créer le document dans Firestore avec l'UID de Firebase Auth comme ID
     db.collection(COLLECTION_NAME).document(firebase_user.uid).set(user_data)
@@ -52,6 +55,9 @@ def update_user(db: FirestoreClient, user_id: str, user_in: UserUpdate) -> Optio
 
     # Mettre à jour Firestore
     firestore_data = user_in.model_dump(exclude_unset=True, exclude={"password"})
+    # Normalize role if provided
+    if 'role' in firestore_data and not firestore_data['role']:
+        firestore_data['role'] = 'student'
     if firestore_data:
         db.collection(COLLECTION_NAME).document(user_id).update(firestore_data)
     

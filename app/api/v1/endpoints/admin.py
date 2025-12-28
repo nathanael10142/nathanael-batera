@@ -3,11 +3,13 @@ Routes d'administration (création facultés, etc.)
 """
 from typing import Any, List
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
-from firebase_admin import firestore
+from firebase_admin import firestore, auth as firebase_auth
 import io
 import csv
 import random
 import logging
+import secrets
+import string
 from fastapi import APIRouter, HTTPException
 from datetime import datetime, timedelta
 
@@ -82,12 +84,18 @@ def _ensure_unique_matricule(candidate: str = None) -> str:
     raise Exception('Failed to generate unique matricule')
 
 
+def generate_random_password(length: int = 12) -> str:
+    """Generate a reasonably strong random password for admin-created users when none is provided."""
+    alphabet = string.ascii_letters + string.digits
+    return ''.join(secrets.choice(alphabet) for _ in range(length))
+
+
 @router.post("/faculties/duplicate")
 async def duplicate_faculty(
     template_faculty_id: int,
     new_faculty_name: str,
     new_faculty_code: str,
-    current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))
+    current_user: Any = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))
 ) -> Any:
     """
     FONCTION CLÉ : Dupliquer une faculté modèle
@@ -145,7 +153,7 @@ async def duplicate_faculty(
 @router.post("/faculties/create", response_model=FacultyOut)
 async def create_faculty_from_scratch(
     payload: FacultyCreate,
-    current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))
+    current_user: Any = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))
 ) -> Any:
     """
     Créer une faculté vierge (sans structure) — endpoint adapté à Firestore models
@@ -169,7 +177,7 @@ async def create_faculty_from_scratch(
 
 @router.get("/faculties", response_model=FacultyListResponse)
 async def list_all_faculties(
-    current_user: User = Depends(get_current_active_user)
+    current_user: Any = Depends(get_current_active_user)
 ) -> Any:
     """
     Lister toutes les facultés (pour admin) — utilise helper public_list pour inclure anciens documents.
@@ -185,7 +193,7 @@ async def list_all_faculties(
 @router.delete("/faculties/{faculty_id}")
 async def deactivate_faculty(
     faculty_id: str,
-    current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))
+    current_user: Any = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))
 ) -> Any:
     """
     Désactiver une faculté (soft delete)
@@ -198,7 +206,7 @@ async def deactivate_faculty(
 @router.post('/students/import')
 async def import_students_csv(
     file: UploadFile = File(...),
-    current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))
+    current_user: Any = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))
 ) -> Any:
     """Import students from CSV file (multipart/form-data, field name 'file').
     The CSV should contain headers. We create documents in `students` collection and a minimal `users` entry.
@@ -247,7 +255,7 @@ async def import_students_csv(
 @router.post('/teachers/import')
 async def import_teachers_csv(
     file: UploadFile = File(...),
-    current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))
+    current_user: Any = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))
 ) -> Any:
     content = await file.read()
     try:
@@ -293,7 +301,7 @@ async def import_teachers_csv(
 @router.post('/groups/create')
 async def create_group(
     payload: dict,
-    current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))
+    current_user: Any = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))
 ) -> Any:
     data = payload.copy()
     # groups should be linked to a promotion (and optionally to a program)
@@ -316,7 +324,7 @@ async def create_group(
 
 
 @router.delete('/groups/{group_id}')
-async def delete_group(group_id: str, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
+async def delete_group(group_id: str, current_user: Any = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
     update_doc('groups', group_id, {'is_deleted': True})
     return {'message': 'Groupe supprimé'}
 
@@ -365,7 +373,7 @@ async def list_promotions() -> Any:
 
 # UE / Courses
 @router.post('/ues/create')
-async def create_ue(payload: dict, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
+async def create_ue(payload: dict, current_user: Any = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
     data = payload.copy() if isinstance(payload, dict) else payload.dict()
     # UE must be attached to a program
     if not data.get('program_id'):
@@ -385,14 +393,14 @@ async def create_ue(payload: dict, current_user: User = Depends(require_permissi
 
 
 @router.delete('/ues/{ue_id}')
-async def delete_ue(ue_id: str, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
+async def delete_ue(ue_id: str, current_user: Any = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
     update_doc('ues', ue_id, {'is_deleted': True})
     return {'message': 'UE supprimée'}
 
 
 # Departments
 @router.post('/departments/create')
-async def create_department(payload: DepartmentCreate, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
+async def create_department(payload: DepartmentCreate, current_user: Any = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
     data = payload.dict()
     # department must belong to a faculty
     if not data.get('faculty_id'):
@@ -413,14 +421,14 @@ async def create_department(payload: DepartmentCreate, current_user: User = Depe
 
 
 @router.delete('/departments/{dept_id}')
-async def delete_department(dept_id: str, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
+async def delete_department(dept_id: str, current_user: Any = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
     update_doc('departments', dept_id, {'is_deleted': True})
     return {'message': 'Département supprimé'}
 
 
 # Programs (Filières)
 @router.post('/programs/create')
-async def create_program(payload: ProgramCreate, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
+async def create_program(payload: ProgramCreate, current_user: Any = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
     data = payload.dict()
     # program should be linked to a faculty; department is optional but if provided must exist
     if not data.get('faculty_id'):
@@ -443,14 +451,14 @@ async def create_program(payload: ProgramCreate, current_user: User = Depends(re
 
 
 @router.delete('/programs/{program_id}')
-async def delete_program(program_id: str, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
+async def delete_program(program_id: str, current_user: Any = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
     update_doc('programs', program_id, {'is_deleted': True})
     return {'message': 'Filière supprimée'}
 
 
 # Promotions
 @router.post('/promotions/create')
-async def create_promotion(payload: PromotionCreate, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
+async def create_promotion(payload: PromotionCreate, current_user: Any = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
     data = payload.dict()
     # promotion must belong to a program
     if not data.get('program_id'):
@@ -472,7 +480,7 @@ async def create_promotion(payload: PromotionCreate, current_user: User = Depend
 
 # Enrollments (inscriptions)
 @router.post('/enrollments/create')
-async def create_enrollment(payload: EnrollmentCreate, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
+async def create_enrollment(payload: EnrollmentCreate, current_user: Any = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
     data = payload.dict()
     data.setdefault('status', 'enrolled')
     try:
@@ -554,7 +562,7 @@ async def dashboard_summary():
 
 
 @router.get('/{collection}/{doc_id}')
-async def admin_get_document(collection: str, doc_id: str, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
+async def admin_get_document(collection: str, doc_id: str, current_user: Any = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
     """Generic admin GET for a single document in any collection"""
     doc = get_doc(collection, doc_id)
     if not doc:
@@ -562,7 +570,7 @@ async def admin_get_document(collection: str, doc_id: str, current_user: User = 
     return doc
 
 @router.put('/{collection}/{doc_id}')
-async def admin_update_document(collection: str, doc_id: str, payload: dict, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
+async def admin_update_document(collection: str, doc_id: str, payload: dict, current_user: Any = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
     """Generic admin update for documents"""
     try:
         update_doc(collection, doc_id, payload)
@@ -602,7 +610,7 @@ async def admin_update_document(collection: str, doc_id: str, payload: dict, cur
     return {'id': doc_id, 'data': get_doc(collection, doc_id)}
 
 @router.delete('/{collection}/{doc_id}')
-async def admin_delete_document(collection: str, doc_id: str, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
+async def admin_delete_document(collection: str, doc_id: str, current_user: Any = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
     """Generic admin delete - soft delete where applicable"""
     try:
         # prefer soft delete flag if available
@@ -628,12 +636,33 @@ async def admin_delete_document(collection: str, doc_id: str, current_user: User
 
 # --- Students & Teachers create endpoints (admin) ---
 @router.post('/students/create')
-async def create_student(payload: dict, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
+async def create_student(payload: dict, current_user: Any = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
     data = payload.copy()
+    # Ensure email is present as we will create a Firebase Auth user
+    email = data.get('email')
+    if not email:
+        raise HTTPException(status_code=400, detail='email is required to create a student account')
+
+    username = data.get('username') or email
+    password = data.get('password') or generate_random_password()
+
+    # Create Firebase Auth user first to avoid orphaned student documents
+    try:
+        user_record = firebase_auth.create_user(email=email, password=password, display_name=username)
+        uid = user_record.uid
+    except Exception as e:
+        logging.exception('Failed to create Firebase Auth user for student %s', email)
+        # Surface a friendly error for duplicate emails
+        if hasattr(e, 'code') and 'EMAIL_EXISTS' in str(e):
+            raise HTTPException(status_code=400, detail=f'Email {email} already exists')
+        raise HTTPException(status_code=500, detail=f'Failed to create auth user: {e}')
+
+    # prepare student document
     data.setdefault('is_deleted', False)
     data.setdefault('created_at', __import__('datetime').datetime.utcnow().isoformat())
     raw_matricule = data.get('matricule')
     data['matricule'] = _ensure_unique_matricule(raw_matricule) if raw_matricule else _ensure_unique_matricule()
+
     # validate optional relations if present
     if data.get('promotion_id'):
         _ensure_exists('promotions', data.get('promotion_id'), required=True)
@@ -641,121 +670,208 @@ async def create_student(payload: dict, current_user: User = Depends(require_per
         _ensure_exists('groups', data.get('group_id'), required=True)
     if data.get('program_id'):
         _ensure_exists('programs', data.get('program_id'), required=True)
+
     try:
         sid = create_doc('students', data)
     except Exception as e:
-        logging.exception('Failed to create student')
+        logging.exception('Failed to create student document; rolling back auth user')
+        try:
+            firebase_auth.delete_user(uid)
+        except Exception:
+            pass
         raise HTTPException(status_code=500, detail=f'Failed to create student: {e}')
-    created = get_doc('students', sid)
-    if not created:
-        logging.error("create_student: create_doc returned id=%s but get_doc returned None", sid)
-        raise HTTPException(status_code=500, detail='Student creation reported success but document not found. Check Firebase credentials.')
-    return {'id': sid, 'data': created}
+
+    # Create corresponding user profile document with Firebase UID as document id
+    try:
+        db = firestore.client()
+        user_doc = {
+            'firebase_uid': uid,
+            'email': email,
+            'username': username,
+            'role': 'student',
+            'student_id': sid,
+            'created_at': __import__('datetime').datetime.utcnow().isoformat(),
+            'is_active': True,
+        }
+        db.collection('users').document(uid).set(user_doc)
+    except Exception as e:
+        logging.exception('Failed to create user profile for student; rolling back student and auth')
+        try:
+            update_doc('students', sid, {'is_deleted': True})
+        except Exception:
+            pass
+        try:
+            firebase_auth.delete_user(uid)
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail=f'Failed to create user profile: {e}')
+
+    # Return student id and created auth uid. Include autogenerated password only when the admin didn't provide one.
+    response = {'id': sid, 'user_uid': uid}
+    if 'password' not in payload:
+        response['password'] = password
+    return response
+
 
 @router.post('/teachers/create')
-async def create_teacher(payload: dict, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))) -> Any:
+async def create_teacher(payload: dict, current_user: Any = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))) -> Any:
     data = payload.copy()
+    email = data.get('email')
+    username = data.get('username') or (email if email else None) or data.get('full_name')
+    password = data.get('password') or generate_random_password()
+
+    # If we have an email, create Firebase Auth user first
+    uid = None
+    if email:
+        try:
+            user_record = firebase_auth.create_user(email=email, password=password, display_name=username)
+            uid = user_record.uid
+        except Exception as e:
+            logging.exception('Failed to create Firebase Auth user for teacher %s', email)
+            if hasattr(e, 'code') and 'EMAIL_EXISTS' in str(e):
+                raise HTTPException(status_code=400, detail=f'Email {email} already exists')
+            raise HTTPException(status_code=500, detail=f'Failed to create auth user: {e}')
+
     data.setdefault('created_at', __import__('datetime').datetime.utcnow().isoformat())
-    # Ensure created teacher is visible in public listings
     data.setdefault('is_deleted', False)
     # validate relations if present
     if data.get('department_id'):
         _ensure_exists('departments', data.get('department_id'))
-    # if teacher is linked to multiple UEs, validate each
     ues = data.get('ues') or data.get('ue_ids')
     if isinstance(ues, (list, tuple)):
         for u in ues:
             _ensure_exists('ues', u)
+
     try:
         tid = create_doc('teachers', data)
     except Exception as e:
         logging.exception('Failed to create teacher')
+        # rollback auth user if created
+        if uid:
+            try:
+                firebase_auth.delete_user(uid)
+            except Exception:
+                pass
         raise HTTPException(status_code=500, detail=f'Failed to create teacher: {e}')
+
     created = get_doc('teachers', tid)
     if not created:
         logging.error("create_teacher: create_doc returned id=%s but get_doc returned None", tid)
+        # rollback
+        try:
+            update_doc('teachers', tid, {'is_deleted': True})
+        except Exception:
+            pass
+        if uid:
+            try:
+                firebase_auth.delete_user(uid)
+            except Exception:
+                pass
         raise HTTPException(status_code=500, detail='Teacher creation reported success but document not found. Check Firebase credentials.')
+
     # create a lightweight user record for the teacher for auth/lookup
     try:
-        email = data.get('email') or created.get('email')
+        db = firestore.client()
         user_doc = {
-            'username': (email.split('@')[0] if email else f'teacher{tid}'),
+            'firebase_uid': uid or None,
+            'username': username or (email.split('@')[0] if email else f'teacher{tid}'),
             'email': email,
             'role': 'teacher',
             'teacher_id': tid,
             'created_at': __import__('datetime').datetime.utcnow().isoformat(),
+            'is_active': True,
         }
-        create_doc('users', user_doc)
+        # prefer to write document with firebase uid if available
+        if uid:
+            db.collection('users').document(uid).set(user_doc)
+        else:
+            # create auto-id doc
+            create_doc('users', user_doc)
     except Exception:
-        # don't fail teacher creation if user creation fails
+        # don't fail teacher creation if user creation fails, but log
         logging.exception('Failed to create linked user for teacher')
-    return {'id': tid, 'data': created}
+
+    response = {'id': tid, 'data': created}
+    # include generated password only if not explicitly provided
+    if 'password' not in payload:
+        response['password'] = password
+    return response
 
 
 # Accept POST /api/v1/students/create (alternate path) but still require admin
 @public_router.post('/students/create')
-async def public_create_student(payload: dict, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
+async def public_create_student(payload: dict, current_user: Any = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
+    # Mirror the admin create behaviour: create Firebase Auth user and profile too
     data = payload.copy()
+    email = data.get('email')
+    if not email:
+        raise HTTPException(status_code=400, detail='email is required to create a student account')
+    username = data.get('username') or email
+    password = data.get('password') or generate_random_password()
+
+    try:
+        user_record = firebase_auth.create_user(email=email, password=password, display_name=username)
+        uid = user_record.uid
+    except Exception as e:
+        logging.exception('Failed to create Firebase Auth user for public student create %s', email)
+        if hasattr(e, 'code') and 'EMAIL_EXISTS' in str(e):
+            raise HTTPException(status_code=400, detail=f'Email {email} already exists')
+        raise HTTPException(status_code=500, detail=f'Failed to create auth user: {e}')
+
     data.setdefault('is_deleted', False)
     data.setdefault('created_at', __import__('datetime').datetime.utcnow().isoformat())
     raw_matricule = data.get('matricule')
     data['matricule'] = _ensure_unique_matricule(raw_matricule) if raw_matricule else _ensure_unique_matricule()
-    # validate optional relations if present
+
     if data.get('promotion_id'):
         _ensure_exists('promotions', data.get('promotion_id'))
     if data.get('group_id'):
         _ensure_exists('groups', data.get('group_id'))
     if data.get('program_id'):
         _ensure_exists('programs', data.get('program_id'))
+
     try:
         sid = create_doc('students', data)
     except Exception as e:
-        logging.exception('Failed to create student (public)')
+        logging.exception('Failed to create student (public); rolling back auth user')
+        try:
+            firebase_auth.delete_user(uid)
+        except Exception:
+            pass
         raise HTTPException(status_code=500, detail=f'Failed to create student: {e}')
-    created = get_doc('students', sid)
-    if not created:
-        logging.error("public_create_student: create_doc returned id=%s but get_doc returned None", sid)
-        raise HTTPException(status_code=500, detail='Student creation reported success but document not found. Check Firebase credentials.')
-    return {'id': sid, 'data': created}
 
-@public_router.post('/teachers/create')
-async def public_create_teacher(payload: dict, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
-    data = payload.copy()
-    data.setdefault('created_at', __import__('datetime').datetime.utcnow().isoformat())
-    data.setdefault('is_deleted', False)
-    # validate relations if present
-    if data.get('department_id'):
-        _ensure_exists('departments', data.get('department_id'))
-    ues = data.get('ues') or data.get('ue_ids')
-    if isinstance(ues, (list, tuple)):
-        for u in ues:
-            _ensure_exists('ues', u)
     try:
-        tid = create_doc('teachers', data)
-    except Exception as e:
-        logging.exception('Failed to create teacher (public)')
-        raise HTTPException(status_code=500, detail=f'Failed to create teacher: {e}')
-    created = get_doc('teachers', tid)
-    if not created:
-        logging.error("public_create_teacher: create_doc returned id=%s but get_doc returned None", tid)
-        raise HTTPException(status_code=500, detail='Teacher creation reported success but document not found. Check Firebase credentials.')
-    try:
-        email = data.get('email')
+        db = firestore.client()
         user_doc = {
-            'username': (email.split('@')[0] if email else f'teacher{tid}'),
+            'firebase_uid': uid,
             'email': email,
-            'role': 'teacher',
-            'teacher_id': tid,
+            'username': username,
+            'role': 'student',
+            'student_id': sid,
             'created_at': __import__('datetime').datetime.utcnow().isoformat(),
+            'is_active': True,
         }
-        create_doc('users', user_doc)
-    except Exception:
-        logging.exception('Failed to create linked user for teacher (public)')
-    return {'id': tid, 'data': created}
+        db.collection('users').document(uid).set(user_doc)
+    except Exception as e:
+        logging.exception('Failed to create user profile for student (public); rolling back')
+        try:
+            update_doc('students', sid, {'is_deleted': True})
+        except Exception:
+            pass
+        try:
+            firebase_auth.delete_user(uid)
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail=f'Failed to create user profile: {e}')
+
+    response = {'id': sid, 'user_uid': uid}
+    if 'password' not in payload:
+        response['password'] = password
+    return response
 
 
 @public_router.get('/debug/firestore')
-async def debug_firestore_info(current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
+async def debug_firestore_info(current_user: Any = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
     """Debug helper: return Firestore project id and counts for key collections.
     Protected to admins to avoid exposing project details publicly.
     """
@@ -775,3 +891,165 @@ async def debug_firestore_info(current_user: User = Depends(require_permission(P
         except Exception as e:
             counts[c] = f'error: {e}'
     return {'ok': True, 'project': project, 'counts': counts}
+
+@router.get('/students/{student_id}/dashboard')
+async def student_dashboard(student_id: str, current_user: Any = Depends(get_current_active_user)) -> Any:
+    """Return a compact dashboard for a single student usable by the mobile client.
+    Accessible to the student themself or to admin users.
+    The response is defensive and always returns an object with keys used by the mobile UI.
+    """
+    try:
+        # permission: allow if the requester is the student or an admin
+        role = getattr(current_user, 'role', None)
+        role_name = None
+        if isinstance(role, dict):
+            role_name = role.get('name')
+        elif isinstance(role, str):
+            role_name = role
+
+        current_id = getattr(current_user, 'id', None) or getattr(current_user, 'uid', None) or None
+        if not (str(current_id) == str(student_id) or (role_name and str(role_name) == 'admin')):
+            raise HTTPException(status_code=403, detail='Not allowed to access this student dashboard')
+
+        # Fetch student profile
+        student = get_doc('students', student_id) or {}
+
+        # Academic summary: use enrollments and optional credits/grades fields
+        academic = {
+            'credits_required': student.get('credits_required') or 0,
+            'credits_validated': 0,
+            'ue_validated': 0,
+            'ue_total': 0,
+            'average': None,
+            'status': 'Unknown',
+        }
+        enrolls = []
+        try:
+            enrolls = list_docs('enrollments', where=[('student_id', '==', str(student_id))], limit=5000) or []
+        except Exception:
+            enrolls = []
+
+        double_grades = []
+        for e in enrolls:
+            status = (e.get('status') or '').lower()
+            credits = 0
+            try:
+                credits = int(e.get('credits', 0) or 0)
+            except Exception:
+                try:
+                    credits = int(float(e.get('credits', 0) or 0))
+                except Exception:
+                    credits = 0
+            academic['ue_total'] += 1
+            if status in ('passed', 'validated', 'validated_with_compensation', 'success'):
+                academic['ue_validated'] += 1
+                academic['credits_validated'] = academic.get('credits_validated', 0) + credits
+            # collect grades if present
+            try:
+                if e.get('grade') is not None:
+                    double_grades.append(float(e.get('grade')))
+            except Exception:
+                pass
+
+        if double_grades:
+            try:
+                academic['average'] = sum(double_grades) / len(double_grades)
+            except Exception:
+                academic['average'] = None
+
+        # Simple academic status rule
+        try:
+            req = int(student.get('credits_required') or academic['credits_required'] or 0)
+            validated = int(academic.get('credits_validated') or 0)
+            if req > 0 and validated >= req:
+                academic['status'] = 'OK'
+            elif validated == 0:
+                academic['status'] = 'Conditionnel'
+            else:
+                academic['status'] = 'Conditionnel'
+        except Exception:
+            academic['status'] = academic.get('status', 'Unknown')
+
+        # Financial summary
+        financial = {
+            'fees_total': 0.0,
+            'paid': 0.0,
+            'balance': 0.0,
+            'exam_access': True,
+        }
+        try:
+            fees_total = float(student.get('fees_total') or student.get('tuition') or 0.0)
+        except Exception:
+            fees_total = 0.0
+        payments = []
+        try:
+            payments = list_docs('payments', where=[('student_id', '==', str(student_id))], limit=5000) or []
+        except Exception:
+            payments = []
+        paid_sum = 0.0
+        for p in payments:
+            try:
+                paid_sum += float(p.get('amount', 0) or 0)
+            except Exception:
+                pass
+        financial['fees_total'] = fees_total
+        financial['paid'] = paid_sum
+        financial['balance'] = round(fees_total - paid_sum, 2)
+        financial['exam_access'] = financial['balance'] <= 0.0
+
+        # Recent notifications (limit 5)
+        recent_notifications = []
+        try:
+            recent_notifications = list_docs('notifications', where=[('recipient_id', '==', str(student_id))], limit=10) or []
+            # sort by created_at desc if possible
+            try:
+                recent_notifications = sorted(recent_notifications, key=lambda x: x.get('created_at', ''), reverse=True)[:5]
+            except Exception:
+                recent_notifications = recent_notifications[:5]
+        except Exception:
+            recent_notifications = []
+
+        # Next exams: attempt to collect exam documents linked to student's program/promotion or explicit student_id
+        next_exams = []
+        try:
+            # Prefer exams that explicitly target the student
+            exams = list_docs('exams', where=[('student_id', '==', str(student_id))], limit=50) or []
+            if not exams:
+                # fallback: exams by program/promotion
+                prog = student.get('program_id')
+                prom = student.get('promotion_id')
+                q = []
+                if prog:
+                    q.append(('program_id', '==', str(prog)))
+                if prom:
+                    q.append(('promotion_id', '==', str(prom)))
+                if q:
+                    exams = list_docs('exams', where=q, limit=50) or []
+            # minimal normalization
+            for ex in exams:
+                next_exams.append({
+                    'id': ex.get('id') or ex.get('exam_id') or None,
+                    'title': ex.get('title') or ex.get('name') or 'Examen',
+                    'date': ex.get('date') or ex.get('datetime') or None,
+                    'ue_code': ex.get('ue_code') or ex.get('ue_id') or None,
+                    'room': ex.get('room') or None,
+                })
+        except Exception:
+            next_exams = []
+
+        # Build compact payload for mobile
+        payload = {
+            'ok': True,
+            'student': student,
+            'academic': academic,
+            'financial': financial,
+            'recent_notifications': recent_notifications,
+            'next_exams': next_exams,
+        }
+        return payload
+    except HTTPException:
+        # re-raise permission and other HTTP errors
+        raise
+    except Exception as e:
+        logging.exception('Error building student dashboard for %s: %s', student_id, e)
+        return {'ok': False, 'error': str(e), 'student': {}, 'academic': {}, 'financial': {}, 'recent_notifications': [], 'next_exams': []}
