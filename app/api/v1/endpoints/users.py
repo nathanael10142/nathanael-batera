@@ -37,15 +37,21 @@ def generate_random_password(length: int = 12) -> str:
     return ''.join(secrets.choice(alphabet) for i in range(length))
 
 @router.post("", status_code=201, summary="Create a new user")
-async def create_user(user_in: UserCreate):
+async def create_user(user_in: UserCreate, current_user: Any = Depends(require_permission(Permissions.ADMIN_MANAGE_USERS))):
     """
     Créer un nouvel utilisateur dans Firebase Auth et un profil dans Firestore.
+    Accessible uniquement aux administrateurs (gestion des utilisateurs).
+    Retourne le mot de passe généré uniquement si celui-ci a été créé par le serveur (ne pas stocker).
     """
+    # Decide password (generate when not provided)
+    password_to_use = user_in.password or generate_random_password()
+    generated_password = None if user_in.password else password_to_use
+
     try:
         # 1. Créer l'utilisateur dans Firebase Authentication
         user_record = auth.create_user(
             email=user_in.email,
-            password=user_in.password or generate_random_password(),
+            password=password_to_use,
             display_name=f"{user_in.first_name or ''} {user_in.last_name or ''}".strip(),
         )
 
@@ -62,12 +68,29 @@ async def create_user(user_in: UserCreate):
         }
         # Use create_doc helper when using auto-doc id; but here we use uid as id
         db = firestore.client()
-        db.collection("users").document(user_record.uid).set(user_profile_data, merge=True)
+        try:
+            db.collection("users").document(user_record.uid).set(user_profile_data, merge=True)
+        except Exception as firestore_exc:
+            # Rollback: delete the created Auth user to avoid orphaned accounts
+            try:
+                auth.delete_user(user_record.uid)
+            except Exception:
+                # best-effort; log and continue to raise original error
+                pass
+            raise HTTPException(status_code=500, detail=f"Failed to create user profile after auth creation: {firestore_exc}")
 
-        return {"message": "Utilisateur créé avec succès", "uid": user_record.uid, "email": user_record.email}
+        response = {"message": "Utilisateur créé avec succès", "uid": user_record.uid, "email": user_record.email}
+        if generated_password:
+            # Return generated password only once (do not persist it anywhere)
+            response["generated_password"] = generated_password
+
+        return response
 
     except auth.EmailAlreadyExistsError:
         raise HTTPException(status_code=400, detail=f"L'email '{user_in.email}' est déjà utilisé par un autre compte.")
+    except HTTPException:
+        # Re-raise HTTP exceptions (e.g. from rollback path)
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Une erreur est survenue lors de la création de l'utilisateur: {e}")
 
