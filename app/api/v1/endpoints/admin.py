@@ -23,6 +23,7 @@ from app.schemas.firestore import (
     EnrollmentCreate, EnrollmentOut
 )
 from app.models.firestore_models import create_doc, get_doc, update_doc, delete_doc, list_docs, public_list
+from app.core.config import settings
 
 router = APIRouter()
 
@@ -487,6 +488,71 @@ async def create_enrollment(payload: EnrollmentCreate, current_user: User = Depe
 
 
 # --- Additional admin CRUD endpoints (single-get / update) ---
+@router.get('/dashboard/summary')
+async def dashboard_summary():
+    """Return dashboard summary counts and recent 7-day series.
+    This endpoint is defensive: if any error occurs (including a missing "dashboard" document),
+    it will fall back to computing counts by listing collections and always return HTTP 200 with
+    a consistent payload to the client.
+    """
+    project = getattr(settings, 'PROJECT_ID', None)
+    collections = ['faculties', 'programs', 'promotions', 'ues', 'departments', 'groups', 'students', 'teachers', 'users']
+    counts: dict = {}
+    recent: dict = {}
+    now = datetime.utcnow()
+    start = now - timedelta(days=6)
+
+    try:
+        # Primary attempt: compute counts and recent series from existing documents
+        for col in collections:
+            try:
+                docs = list_docs(col)
+            except Exception as e:
+                logging.exception('Error listing collection %s: %s', col, e)
+                counts[col] = 0
+                recent[col] = [0] * 7
+                continue
+
+            # docs may be list of dicts
+            counts[col] = len(docs) if isinstance(docs, list) else 0
+
+            # build 7-day series based on created_at if present
+            series = [0] * 7
+            if isinstance(docs, list):
+                for d in docs:
+                    created = None
+                    if isinstance(d, dict):
+                        created_at = d.get('created_at') or d.get('createdAt')
+                        if created_at:
+                            try:
+                                created = datetime.fromisoformat(created_at)
+                            except Exception:
+                                created = None
+                    if not created:
+                        continue
+                    if created < start or created > now:
+                        continue
+                    idx = (created.date() - start.date()).days
+                    if 0 <= idx < 7:
+                        series[idx] += 1
+            recent[col] = series
+
+    except Exception as e:
+        # If something unexpected happens, attempt a best-effort fallback using list_docs per collection
+        logging.exception('Unexpected error building dashboard summary: %s', e)
+        for col in collections:
+            try:
+                docs = list_docs(col)
+                counts[col] = len(docs) if isinstance(docs, list) else 0
+                recent[col] = [0] * 7
+            except Exception:
+                counts[col] = 0
+                recent[col] = [0] * 7
+
+    # Always return a consistent successful payload (frontend expects HTTP 200)
+    return {'ok': True, 'project': project, 'counts': counts, 'recent': recent}
+
+
 @router.get('/{collection}/{doc_id}')
 async def admin_get_document(collection: str, doc_id: str, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
     """Generic admin GET for a single document in any collection"""
@@ -709,38 +775,3 @@ async def debug_firestore_info(current_user: User = Depends(require_permission(P
         except Exception as e:
             counts[c] = f'error: {e}'
     return {'ok': True, 'project': project, 'counts': counts}
-
-
-@router.get('/dashboard/summary')
-def dashboard_summary():
-    project = settings.PROJECT_ID
-    collections = ['faculties', 'programs', 'promotions', 'ues', 'departments', 'groups', 'students', 'teachers', 'users']
-    counts = {}
-    recent = {}
-    now = datetime.utcnow()
-    start = now - timedelta(days=6)
-
-    for col in collections:
-        docs = list_docs(col)
-        counts[col] = len(docs)
-        # build 7-day series based on created_at if present
-        series = [0] * 7
-        for d in docs:
-            created = None
-            if isinstance(d, dict):
-                created_at = d.get('created_at') or d.get('createdAt')
-                if created_at:
-                    try:
-                        created = datetime.fromisoformat(created_at)
-                    except Exception:
-                        created = None
-            if not created:
-                continue
-            if created < start or created > now:
-                continue
-            idx = (created.date() - start.date()).days
-            if 0 <= idx < 7:
-                series[idx] += 1
-        recent[col] = series
-
-    return {'ok': True, 'project': project, 'counts': counts, 'recent': recent}
