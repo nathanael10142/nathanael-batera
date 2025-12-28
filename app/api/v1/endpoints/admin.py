@@ -208,8 +208,9 @@ async def import_students_csv(
     file: UploadFile = File(...),
     current_user: Any = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))
 ) -> Any:
-    """Import students from CSV file (multipart/form-data, field name 'file').
-    The CSV should contain headers. We create documents in `students` collection and a minimal `users` entry.
+    """Import students from CSV file and create Firebase Auth users + Firestore documents atomically when possible.
+    For each row we try to create a Firebase Auth user (if email present). If Auth creation succeeds but Firestore write fails we delete the created auth user (rollback).
+    Returns created count, any errors, and a list of created accounts with generated passwords (admin-only information).
     """
     content = await file.read()
     try:
@@ -220,36 +221,104 @@ async def import_students_csv(
     reader = csv.DictReader(io.StringIO(text))
     created = 0
     errors = []
+    created_accounts = []
     for row in reader:
+        email = (row.get('email') or row.get('contact_email') or '').strip() or None
+        full_name = (row.get('full_name') or row.get('name') or f"{row.get('first_name','') } {row.get('last_name','')}").strip()
+        raw_matricule = (row.get('matricule') or '').strip() or None
+        password_from_csv = (row.get('password') or '').strip() or None
+
+        # generate a password only if none provided
+        generated_pw = None
+        if not password_from_csv:
+            generated_pw = generate_random_password()
+            password_to_use = generated_pw
+        else:
+            password_to_use = password_from_csv
+
+        uid = None
+        created_auth = False
         try:
-            full_name = (row.get('full_name') or row.get('name') or f"{row.get('first_name','') } {row.get('last_name','')}").strip()
-            email = row.get('email') or row.get('contact_email')
-            raw_matricule = row.get('matricule')
-            matricule = _ensure_unique_matricule(raw_matricule) if raw_matricule else _ensure_unique_matricule()
-            student_doc = {
-                'full_name': full_name,
-                'email': email,
-                'matricule': matricule,
-                'is_deleted': False,
-                'created_at': __import__('datetime').datetime.utcnow().isoformat(),
-            }
+            if email:
+                try:
+                    # if user already exists, link to existing uid
+                    existing = firebase_auth.get_user_by_email(email)
+                    uid = existing.uid
+                except Exception:
+                    # create a new auth user
+                    user_record = firebase_auth.create_user(email=email, password=password_to_use, display_name=full_name)
+                    uid = user_record.uid
+                    created_auth = True
+        except Exception as e:
+            logging.exception('Failed to create or lookup Firebase Auth for %s: %s', email, e)
+            errors.append(f"Auth error for {email or full_name}: {e}")
+            # skip this row
+            continue
+
+        # prepare student document (do NOT store plaintext password)
+        student_doc = {
+            'full_name': full_name,
+            'email': email,
+            'matricule': _ensure_unique_matricule(raw_matricule) if raw_matricule else _ensure_unique_matricule(),
+            'is_deleted': False,
+            'created_at': __import__('datetime').datetime.utcnow().isoformat(),
+        }
+        if uid:
+            student_doc['auth_uid'] = uid
+
+        # create student document and user profile atomically with rollback
+        sid = None
+        try:
             sid = create_doc('students', student_doc)
-            # Create a lightweight user record for auth/lookup
+        except Exception as e:
+            logging.exception('Failed to create student document for %s; rolling back auth if created', email or full_name)
+            # rollback created auth user if we created one
+            if created_auth and uid:
+                try:
+                    firebase_auth.delete_user(uid)
+                except Exception:
+                    pass
+            errors.append(f"Failed to create student doc for {email or full_name}: {e}")
+            continue
+
+        # create corresponding user profile document keyed by firebase uid when available
+        try:
+            db = firestore.client()
             user_doc = {
-                'username': (email.split('@')[0] if email else matricule),
+                'firebase_uid': uid,
                 'email': email,
+                'username': (email.split('@')[0] if email else student_doc['matricule']),
                 'role': 'student',
                 'student_id': sid,
                 'created_at': __import__('datetime').datetime.utcnow().isoformat(),
+                'is_active': True,
             }
-            create_doc('users', user_doc)
-            created += 1
+            if uid:
+                db.collection('users').document(uid).set(user_doc)
+            else:
+                # fallback: create an auto-id user doc for lookup
+                create_doc('users', user_doc)
         except Exception as e:
-            logging.exception('Error importing student row')
-            errors.append(str(e))
+            logging.exception('Failed to create user profile for %s; rolling back student and auth', email or full_name)
+            # rollback student
+            try:
+                update_doc('students', sid, {'is_deleted': True})
+            except Exception:
+                pass
+            # rollback auth if created
+            if created_auth and uid:
+                try:
+                    firebase_auth.delete_user(uid)
+                except Exception:
+                    pass
+            errors.append(f"Failed to create user profile for {email or full_name}: {e}")
             continue
 
-    return {'created': created, 'errors': errors}
+        created += 1
+        if generated_pw:
+            created_accounts.append({'email': email, 'password': generated_pw})
+
+    return {'created': created, 'errors': errors, 'created_accounts': created_accounts}
 
 
 @router.post('/teachers/import')
@@ -257,6 +326,7 @@ async def import_teachers_csv(
     file: UploadFile = File(...),
     current_user: Any = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))
 ) -> Any:
+    """Import teachers from CSV and create Firebase Auth users when email present. Rollback on failures."""
     content = await file.read()
     try:
         text = content.decode('utf-8')
@@ -265,36 +335,81 @@ async def import_teachers_csv(
     reader = csv.DictReader(io.StringIO(text))
     created = 0
     errors = []
+    created_accounts = []
     for row in reader:
+        full_name = (row.get('full_name') or row.get('name') or f"{row.get('first_name','') } {row.get('last_name','')}").strip()
+        email = (row.get('email') or '').strip() or None
+        password_from_csv = (row.get('password') or '').strip() or None
+
+        generated_pw = None
+        if not password_from_csv:
+            generated_pw = generate_random_password()
+            password_to_use = generated_pw
+        else:
+            password_to_use = password_from_csv
+
+        uid = None
+        created_auth = False
         try:
-            full_name = row.get('full_name') or row.get('name') or f"{row.get('first_name','') } {row.get('last_name','')}".strip()
-            email = row.get('email')
-            teacher_doc = {
-                'full_name': full_name,
-                'email': email,
-                'is_deleted': False,
-                'created_at': __import__('datetime').datetime.utcnow().isoformat(),
-            }
-            tid = create_doc('teachers', teacher_doc)
-            # create a lightweight user record for the teacher for auth/lookup
-            try:
-                created_teacher = get_doc('teachers', tid) or {}
-                user_doc = {
-                    'username': (email.split('@')[0] if email else f'teacher{tid}'),
-                    'email': email,
-                    'role': 'teacher',
-                    'teacher_id': tid,
-                    'created_at': __import__('datetime').datetime.utcnow().isoformat(),
-                }
-                create_doc('users', user_doc)
-            except Exception:
-                # don't fail teacher creation if user creation fails
-                pass
-            created += 1
+            if email:
+                try:
+                    existing = firebase_auth.get_user_by_email(email)
+                    uid = existing.uid
+                except Exception:
+                    user_record = firebase_auth.create_user(email=email, password=password_to_use, display_name=full_name)
+                    uid = user_record.uid
+                    created_auth = True
         except Exception as e:
-            errors.append(str(e))
+            logging.exception('Failed to create or lookup Firebase Auth for teacher %s: %s', email, e)
+            errors.append(f"Auth error for {email or full_name}: {e}")
             continue
-    return {'created': created, 'errors': errors}
+
+        teacher_doc = {
+            'full_name': full_name,
+            'email': email,
+            'is_deleted': False,
+            'created_at': __import__('datetime').datetime.utcnow().isoformat(),
+        }
+        if uid:
+            teacher_doc['auth_uid'] = uid
+
+        try:
+            tid = create_doc('teachers', teacher_doc)
+        except Exception as e:
+            logging.exception('Failed to create teacher doc for %s; rolling back auth if created', email or full_name)
+            if created_auth and uid:
+                try:
+                    firebase_auth.delete_user(uid)
+                except Exception:
+                    pass
+            errors.append(f"Failed to create teacher doc for {email or full_name}: {e}")
+            continue
+
+        # create linked user
+        try:
+            db = firestore.client()
+            user_doc = {
+                'firebase_uid': uid,
+                'username': (email.split('@')[0] if email else f'teacher{tid}'),
+                'email': email,
+                'role': 'teacher',
+                'teacher_id': tid,
+                'created_at': __import__('datetime').datetime.utcnow().isoformat(),
+                'is_active': True,
+            }
+            if uid:
+                db.collection('users').document(uid).set(user_doc)
+            else:
+                create_doc('users', user_doc)
+        except Exception:
+            logging.exception('Failed to create linked user for teacher %s', email or full_name)
+            # don't fail teacher creation; but if user creation fails we keep teacher doc and log
+
+        created += 1
+        if generated_pw:
+            created_accounts.append({'email': email, 'password': generated_pw})
+
+    return {'created': created, 'errors': errors, 'created_accounts': created_accounts}
 
 
 # Groups CRUD (admin) and public listing
