@@ -17,6 +17,7 @@ def seed():
         {"name": "teacher"},
         {"name": "accountant"},
         {"name": "dean"},
+        {"name": "cashier"},
     ]
 
     # Use Firestore directly for id-based lookup because roles are simple
