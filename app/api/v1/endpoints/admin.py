@@ -35,6 +35,27 @@ def _public_list(collection: str, limit: int = 2000):
     return public_list(collection, limit=limit)
 
 
+# New helper: validate related document existence
+def _ensure_exists(collection: str, doc_id: Any, required: bool = True):
+    """Ensure a referenced document exists in Firestore.
+    If required is True and doc_id is falsy, raises HTTPException(400).
+    If the referenced document does not exist, raises HTTPException(400).
+    Returns True if exists, False if not required and not provided.
+    """
+    if doc_id is None or (isinstance(doc_id, str) and doc_id.strip() == ""):
+        if required:
+            raise HTTPException(status_code=400, detail=f"{collection}_id is required")
+        return False
+    try:
+        found = get_doc(collection, str(doc_id))
+    except Exception as e:
+        logging.exception("Error while checking existence of %s %s", collection, doc_id)
+        raise HTTPException(status_code=400, detail=f"Error validating {collection} relation: {e}")
+    if not found:
+        raise HTTPException(status_code=400, detail=f"{collection} '{doc_id}' not found")
+    return True
+
+
 def _generate_matricule() -> str:
     # Simple matricule: YEAR + 6 random digits
     return f"{__import__('datetime').datetime.now().year}{random.randint(100000, 999999)}"
@@ -272,6 +293,12 @@ async def create_group(
     current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))
 ) -> Any:
     data = payload.copy()
+    # groups should be linked to a promotion (and optionally to a program)
+    if not data.get('promotion_id'):
+        raise HTTPException(status_code=400, detail='promotion_id is required for groups')
+    _ensure_exists('promotions', data.get('promotion_id'))
+    if data.get('program_id'):
+        _ensure_exists('programs', data.get('program_id'))
     data.setdefault('created_at', __import__('datetime').datetime.utcnow().isoformat())
     try:
         gid = create_doc('groups', data)
@@ -336,7 +363,11 @@ async def list_promotions() -> Any:
 # UE / Courses
 @router.post('/ues/create')
 async def create_ue(payload: dict, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
-    data = payload.copy()
+    data = payload.copy() if isinstance(payload, dict) else payload.dict()
+    # UE must be attached to a program
+    if not data.get('program_id'):
+        raise HTTPException(status_code=400, detail='program_id is required for UEs')
+    _ensure_exists('programs', data.get('program_id'))
     data.setdefault('created_at', __import__('datetime').datetime.utcnow().isoformat())
     try:
         uid = create_doc('ues', data)
@@ -360,6 +391,10 @@ async def delete_ue(ue_id: str, current_user: User = Depends(require_permission(
 @router.post('/departments/create')
 async def create_department(payload: DepartmentCreate, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
     data = payload.dict()
+    # department must belong to a faculty
+    if not data.get('faculty_id'):
+        raise HTTPException(status_code=400, detail='faculty_id is required for departments')
+    _ensure_exists('faculties', data.get('faculty_id'))
     data.setdefault('is_active', True)
     data.setdefault('is_deleted', False)
     try:
@@ -384,6 +419,12 @@ async def delete_department(dept_id: str, current_user: User = Depends(require_p
 @router.post('/programs/create')
 async def create_program(payload: ProgramCreate, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
     data = payload.dict()
+    # program should be linked to a faculty; department is optional but if provided must exist
+    if not data.get('faculty_id'):
+        raise HTTPException(status_code=400, detail='faculty_id is required for programs')
+    _ensure_exists('faculties', data.get('faculty_id'))
+    if data.get('department_id'):
+        _ensure_exists('departments', data.get('department_id'))
     data.setdefault('is_active', True)
     data.setdefault('is_deleted', False)
     try:
@@ -408,6 +449,10 @@ async def delete_program(program_id: str, current_user: User = Depends(require_p
 @router.post('/promotions/create')
 async def create_promotion(payload: PromotionCreate, current_user: User = Depends(require_permission(Permissions.ADMIN_CREATE_FACULTY))):
     data = payload.dict()
+    # promotion must belong to a program
+    if not data.get('program_id'):
+        raise HTTPException(status_code=400, detail='program_id is required for promotions')
+    _ensure_exists('programs', data.get('program_id'))
     data.setdefault('is_active', True)
     data.setdefault('is_deleted', False)
     try:
@@ -521,6 +566,13 @@ async def create_student(payload: dict, current_user: User = Depends(require_per
     data.setdefault('created_at', __import__('datetime').datetime.utcnow().isoformat())
     raw_matricule = data.get('matricule')
     data['matricule'] = _ensure_unique_matricule(raw_matricule) if raw_matricule else _ensure_unique_matricule()
+    # validate optional relations if present
+    if data.get('promotion_id'):
+        _ensure_exists('promotions', data.get('promotion_id'), required=True)
+    if data.get('group_id'):
+        _ensure_exists('groups', data.get('group_id'), required=True)
+    if data.get('program_id'):
+        _ensure_exists('programs', data.get('program_id'), required=True)
     try:
         sid = create_doc('students', data)
     except Exception as e:
@@ -538,6 +590,14 @@ async def create_teacher(payload: dict, current_user: User = Depends(require_per
     data.setdefault('created_at', __import__('datetime').datetime.utcnow().isoformat())
     # Ensure created teacher is visible in public listings
     data.setdefault('is_deleted', False)
+    # validate relations if present
+    if data.get('department_id'):
+        _ensure_exists('departments', data.get('department_id'))
+    # if teacher is linked to multiple UEs, validate each
+    ues = data.get('ues') or data.get('ue_ids')
+    if isinstance(ues, (list, tuple)):
+        for u in ues:
+            _ensure_exists('ues', u)
     try:
         tid = create_doc('teachers', data)
     except Exception as e:
@@ -572,6 +632,13 @@ async def public_create_student(payload: dict, current_user: User = Depends(requ
     data.setdefault('created_at', __import__('datetime').datetime.utcnow().isoformat())
     raw_matricule = data.get('matricule')
     data['matricule'] = _ensure_unique_matricule(raw_matricule) if raw_matricule else _ensure_unique_matricule()
+    # validate optional relations if present
+    if data.get('promotion_id'):
+        _ensure_exists('promotions', data.get('promotion_id'))
+    if data.get('group_id'):
+        _ensure_exists('groups', data.get('group_id'))
+    if data.get('program_id'):
+        _ensure_exists('programs', data.get('program_id'))
     try:
         sid = create_doc('students', data)
     except Exception as e:
@@ -588,6 +655,13 @@ async def public_create_teacher(payload: dict, current_user: User = Depends(requ
     data = payload.copy()
     data.setdefault('created_at', __import__('datetime').datetime.utcnow().isoformat())
     data.setdefault('is_deleted', False)
+    # validate relations if present
+    if data.get('department_id'):
+        _ensure_exists('departments', data.get('department_id'))
+    ues = data.get('ues') or data.get('ue_ids')
+    if isinstance(ues, (list, tuple)):
+        for u in ues:
+            _ensure_exists('ues', u)
     try:
         tid = create_doc('teachers', data)
     except Exception as e:
