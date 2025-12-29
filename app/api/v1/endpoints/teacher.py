@@ -124,7 +124,7 @@ async def teacher_dashboard(teacher_id: str, current_user: Any = Depends(get_cur
     try:
         teacher = get_doc('teachers', teacher_id) or {}
         if not teacher:
-            return {'ok': False, 'error': 'Teacher not found', 'teacher': {}, 'summary': {}}
+            return {'ok': False, 'error': 'Teacher not found', 'teacher': {}, 'profile': {}, 'summary': {}}
 
         # basic profile
         profile = {
@@ -179,10 +179,10 @@ async def teacher_dashboard(teacher_id: str, current_user: Any = Depends(get_cur
             'notifications': sorted(notifications, key=lambda x: x.get('created_at',''), reverse=True)[:10]
         }
 
-        return {'ok': True, 'teacher': profile, 'summary': summary}
+        return {'ok': True, 'teacher': profile, 'profile': profile, 'summary': summary}
     except Exception as e:
         logging.exception('Error building teacher dashboard %s: %s', teacher_id, e)
-        return {'ok': False, 'error': str(e), 'teacher': {}, 'summary': {}}
+        return {'ok': False, 'error': str(e), 'teacher': {}, 'profile': {}, 'summary': {}}
 
 
 @router.get('/teachers/{teacher_id}/courses')
