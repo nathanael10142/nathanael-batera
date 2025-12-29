@@ -153,7 +153,7 @@ api_router.include_router(courses.router, prefix="/courses", tags=["Courses (UE)
 api_router.include_router(grades.router, prefix="/grades", tags=["Grades & Deliberation"])
 api_router.include_router(finances.router, prefix="/finances", tags=["Finances & Accounting"])
 api_router.include_router(messages.router, prefix="/messages", tags=["Messaging"])
-api_router.include_router(teacher.router, prefix="/teachers", tags=["Teachers"])
+api_router.include_router(teacher.router, tags=["Teachers"])
 
 # Expose lightweight public listing endpoints implemented in admin.public_router
 api_router.include_router(admin.public_router, prefix="", tags=["Public"])
