@@ -14,7 +14,7 @@ from urllib.parse import urlparse
 from app.core.config import settings
 from app.core.firebase_connector import initialize_firebase # 👈 CORRECTION: Importer depuis le bon fichier
 from app.api.v1.endpoints import (
-    auth, admin, users, students, faculties, courses, grades, finances, messages
+    auth, admin, users, students, faculties, courses, grades, finances, messages, teacher
 )
 
 
@@ -153,6 +153,7 @@ api_router.include_router(courses.router, prefix="/courses", tags=["Courses (UE)
 api_router.include_router(grades.router, prefix="/grades", tags=["Grades & Deliberation"])
 api_router.include_router(finances.router, prefix="/finances", tags=["Finances & Accounting"])
 api_router.include_router(messages.router, prefix="/messages", tags=["Messaging"])
+api_router.include_router(teacher.router, prefix="/teachers", tags=["Teachers"])
 
 # Expose lightweight public listing endpoints implemented in admin.public_router
 api_router.include_router(admin.public_router, prefix="", tags=["Public"])
