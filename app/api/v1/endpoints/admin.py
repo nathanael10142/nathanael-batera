@@ -33,11 +33,11 @@ router = APIRouter()
 public_router = APIRouter()
 
 
-def _public_list(collection: str, limit: int = 2000):
+def _public_list(collection: str, limit: int = 50, offset: int = 0):
     """Helper wrapper: delegate to centralized public_list in firestore_models.
     Ensures all public listing endpoints behave the same (includes older docs missing is_deleted).
     """
-    return public_list(collection, limit=limit)
+    return public_list(collection, limit=limit, offset=offset)
 
 
 # New helper: validate related document existence
@@ -445,45 +445,44 @@ async def delete_group(group_id: str, current_user: Any = Depends(require_permis
 
 
 @public_router.get('/groups')
-async def list_groups() -> Any:
-    return _public_list('groups', limit=1000)
+async def list_groups(limit: int = 50, offset: int = 0) -> Any:
+    return _public_list('groups', limit=limit, offset=offset)
 
 
 # Public listing for faculties (missing - client often calls /faculties)
 @public_router.get('/faculties')
-async def public_list_faculties() -> Any:
-    return _public_list('faculties', limit=1000)
+async def public_list_faculties(limit: int = 50, offset: int = 0) -> Any:
+    return _public_list('faculties', limit=limit, offset=offset)
 
 
-# Public listing for students and teachers (used by mobile admin lists)
 @public_router.get('/students')
-async def public_list_students() -> Any:
-    return _public_list('students', limit=2000)
+async def public_list_students(limit: int = 50, offset: int = 0) -> Any:
+    return _public_list('students', limit=limit, offset=offset)
 
 
 @public_router.get('/teachers')
-async def public_list_teachers() -> Any:
-    return _public_list('teachers', limit=2000)
+async def public_list_teachers(limit: int = 50, offset: int = 0) -> Any:
+    return _public_list('teachers', limit=limit, offset=offset)
 
 
 @public_router.get('/ues')
-async def list_ues() -> Any:
-    return _public_list('ues', limit=2000)
+async def list_ues(limit: int = 50, offset: int = 0) -> Any:
+    return _public_list('ues', limit=limit, offset=offset)
 
 
 @public_router.get('/departments')
-async def list_departments() -> Any:
-    return _public_list('departments', limit=2000)
+async def list_departments(limit: int = 50, offset: int = 0) -> Any:
+    return _public_list('departments', limit=limit, offset=offset)
 
 
 @public_router.get('/programs')
-async def list_programs() -> Any:
-    return _public_list('programs', limit=2000)
+async def list_programs(limit: int = 50, offset: int = 0) -> Any:
+    return _public_list('programs', limit=limit, offset=offset)
 
 
 @public_router.get('/promotions')
-async def list_promotions() -> Any:
-    return _public_list('promotions', limit=2000)
+async def list_promotions(limit: int = 50, offset: int = 0) -> Any:
+    return _public_list('promotions', limit=limit, offset=offset)
 
 
 # UE / Courses

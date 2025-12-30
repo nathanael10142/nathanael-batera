@@ -21,10 +21,12 @@ def create_user(
 
 @router.get("/", response_model=List[User])
 def read_users(
-    db: FirestoreClient = Depends(get_firestore_client)
+    db: FirestoreClient = Depends(get_firestore_client),
+    limit: int = 50,
+    offset: int = 0
 ):
-    """Récupère la liste de tous les utilisateurs."""
-    return crud_user_firebase.get_all_users(db=db)
+    """Récupère la liste paginée des utilisateurs."""
+    return crud_user_firebase.get_all_users(db=db, limit=limit, offset=offset)
 
 @router.get("/{user_id}", response_model=User)
 def read_user_by_id(

@@ -38,10 +38,14 @@ def get_user(db: FirestoreClient, user_id: str) -> Optional[Dict[str, Any]]:
         return {"id": doc.id, **doc.to_dict()}
     return None
 
-def get_all_users(db: FirestoreClient) -> List[Dict[str, Any]]:
-    """Récupère tous les utilisateurs."""
-    users_ref = db.collection(COLLECTION_NAME).stream()
-    return [{"id": doc.id, **doc.to_dict()} for doc in users_ref]
+def get_all_users(db: FirestoreClient, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+    """Récupère les utilisateurs paginés."""
+    users_ref = db.collection(COLLECTION_NAME)
+    query = users_ref.limit(limit)
+    if offset:
+        query = query.offset(offset)
+    docs = query.stream()
+    return [{"id": doc.id, **doc.to_dict()} for doc in docs]
 
 def update_user(db: FirestoreClient, user_id: str, user_in: UserUpdate) -> Optional[Dict[str, Any]]:
     """Met à jour un utilisateur."""

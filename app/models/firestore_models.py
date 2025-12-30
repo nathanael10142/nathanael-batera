@@ -232,7 +232,7 @@ def delete_doc(collection: str, doc_id: str) -> None:
         raise RuntimeError(f"Failed to delete document {collection}/{doc_id}: {e}")
 
 
-def list_docs(collection: str, where: Optional[List[tuple]] = None, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+def list_docs(collection: str, where: Optional[List[tuple]] = None, limit: Optional[int] = None, offset: int = 0) -> List[Dict[str, Any]]:
     db = _get_client()
     q = db.collection(collection)
     if where:
@@ -241,9 +241,10 @@ def list_docs(collection: str, where: Optional[List[tuple]] = None, limit: Optio
                 field, op, value = w
                 q = q.where(field, op, value)
     if limit:
-        docs = q.limit(limit).stream()
-    else:
-        docs = q.stream()
+        q = q.limit(limit)
+    if offset:
+        q = q.offset(offset)
+    docs = q.stream()
     out = []
     for d in docs:
         dd = d.to_dict()
@@ -252,14 +253,14 @@ def list_docs(collection: str, where: Optional[List[tuple]] = None, limit: Optio
     return out
 
 
-def public_list(collection: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+def public_list(collection: str, limit: Optional[int] = None, offset: int = 0) -> List[Dict[str, Any]]:
     """Return documents for public listings, excluding documents where is_deleted == True.
     This helper centralizes the behavior so endpoints include older docs missing the is_deleted flag.
     Adds logging to help diagnose empty-list issues.
     """
     import logging
     logger = logging.getLogger(__name__)
-    docs = list_docs(collection, limit=limit)
+    docs = list_docs(collection, limit=limit, offset=offset)
     try:
         visible = [d for d in docs if not d.get('is_deleted', False)]
     except Exception:
