@@ -3,6 +3,7 @@ Endpoints dédiés aux enseignants : dashboard, gestion des cours, étudiants pa
 supports pédagogiques, annonces/communication, notifications et gestion de profil.
 Conçu pour être défensif et similaire à students.py.
 """
+from fastapi import Path
 from typing import Any, List, Dict, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from datetime import datetime, timedelta
