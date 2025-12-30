@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from firebase_admin import auth, firestore
 from pydantic import BaseModel
+import time
 
 from app.core.security import create_access_token, get_current_active_user # security depends on the SQLAlchemy model
 from app.models.user import User as DBUser # Rename the SQLAlchemy model to avoid conflict
@@ -26,14 +27,16 @@ async def login_with_firebase(
     Authenticates with a Firebase ID token, creates a Firestore user on first login,
     and returns a local API access token plus a lightweight user summary.
     """
+    t0 = time.perf_counter()
     try:
         # 1. Verify the Firebase ID token
+        t1 = time.perf_counter()
         decoded_token = auth.verify_id_token(request.id_token)
+        t2 = time.perf_counter()
         uid = decoded_token['uid']
         email = decoded_token.get('email')
         display_name = decoded_token.get('name') or decoded_token.get('displayName')
 
-        # Debug log: verified incoming id_token
         from app.core.config import settings as _settings
         if getattr(_settings, 'DEBUG', False):
             print(f"🔐 [DEBUG] Firebase id_token verified for uid={uid}. Decoded keys={list(decoded_token.keys())}")
@@ -42,14 +45,13 @@ async def login_with_firebase(
         db = firestore.client()
         users_ref = db.collection('users').document(uid)
         user_doc = users_ref.get()
+        t3 = time.perf_counter()
 
         if not user_doc.exists:
-            # Create the user document on first login
             user_record = {
                 'firebase_uid': uid,
                 'email': email,
                 'display_name': display_name or (email.split('@')[0] if email else None),
-                # Make the provided email an admin user
                 'role': 'admin' if email == 'nathanaelhacker6@gmail.com' else 'user',
             }
             users_ref.set(user_record)
@@ -59,16 +61,20 @@ async def login_with_firebase(
             user_record = user_doc.to_dict() or {}
             if getattr(_settings, 'DEBUG', False):
                 print(f"✅ [INFO] Existing Firestore user found for uid={uid}")
+        t4 = time.perf_counter()
 
         # 3. Create a local JWT access token for your API
         access_token = create_access_token(data={"sub": uid})
+        t5 = time.perf_counter()
         if getattr(_settings, 'DEBUG', False):
-            # Print full token and length to help diagnose truncated token issues
             try:
                 print(f"📤 Réponse login - Token length: {len(access_token)}")
                 print(f"📤 Token complet: {access_token}")
             except Exception:
                 pass
+
+        # Log timings for each step
+        print(f"⏱️ [PERF] login: verify_id_token={t2-t1:.3f}s, firestore_get={t3-t2:.3f}s, user_create/check={t4-t3:.3f}s, jwt={t5-t4:.3f}s, total={t5-t0:.3f}s")
 
         # Return token + lightweight user info
         return {

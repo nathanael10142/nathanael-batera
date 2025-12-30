@@ -31,3 +31,6 @@ db.sqlite3
 # Fichiers de test
 .pytest_cache/
 .coverage
+
+# Clés et credentials sensibles
+app/serviceAccountKey.json

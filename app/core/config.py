@@ -6,7 +6,7 @@ class Settings(BaseSettings):
     # Basic application info
     APP_NAME: str = "University System"
     APP_VERSION: str = "0.1.0"
-    DEBUG: bool = True
+    DEBUG: bool = False  # Désactive le mode DEBUG pour la prod
 
     # API
     API_V1_STR: str = "/api/v1"
