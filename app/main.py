@@ -12,11 +12,10 @@ from urllib.parse import urlparse
 
 # ✅ IMPORTS CORRIGÉS (IMPORTANT)
 from app.core.config import settings
-from app.core.firebase_connector import initialize_firebase # 👈 CORRECTION: Importer depuis le bon fichier
+from app.core.firebase_connector import initialize_firebase
 from app.api.v1.endpoints import (
     auth, admin, users, students, faculties, courses, grades, finances, messages, teacher
 )
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -34,33 +33,29 @@ async def lifespan(app: FastAPI):
     # Shutdown
     print("👋 Arrêt de l'application...")
 
-
 # Créer l'application
 app = FastAPI(
-    title=settings.APP_NAME, # Titre de l'API
-    version=settings.APP_VERSION, # Version
-    description="Système de gestion universitaire complet (LMD, admin, finances)", # Description
+    title=settings.APP_NAME,
+    version=settings.APP_VERSION,
+    description="Système de gestion universitaire complet (LMD, admin, finances)",
     lifespan=lifespan,
-    # URLs de la documentation interactive (uniquement en mode DEBUG)
     docs_url="/api/docs" if settings.DEBUG else None,
     redoc_url="/api/redoc" if settings.DEBUG else None,
 )
 
 # --- Configuration CORS (sécurisée) ---
-# Defaults: production should allow only the deployed frontend origin(s)
+# En production, autorise uniquement le frontend Vercel
 DEFAULT_PROD_ORIGINS = [
-    "https://unigom-by-nathanael-batera.onrender.com",
+    "https://nathanael-batera.vercel.app",  # <-- URL frontend Vercel
 ]
 
 def _normalize_origins(raw):
-    # Accept list or JSON string or single string
     if not raw:
         return []
     if isinstance(raw, list):
         return raw
     if isinstance(raw, str):
         raw = raw.strip()
-        # try JSON array
         if raw.startswith("["):
             try:
                 parsed = json.loads(raw)
@@ -75,7 +70,6 @@ def _sanitize_origins(origins_list):
     clean = []
     for o in origins_list:
         if not o or o == "*":
-            # never allow wildcard in production
             continue
         try:
             parsed = urlparse(o)
@@ -83,20 +77,18 @@ def _sanitize_origins(origins_list):
                 clean.append(o.rstrip('/'))
         except Exception:
             continue
-    # preserve order and uniqueness
     return list(dict.fromkeys(clean))
 
 if settings.DEBUG:
-    # Allow common local dev origins but avoid wildcard in production code path
     origins_to_allow = [
         "http://localhost:3000",
         "http://localhost:5173",
         "http://localhost:8080",
         "http://127.0.0.1:8000",
-        "http://localhost:52551", # Ajout pour le client Flutter en dev
+        "http://localhost:52551",
         "http://localhost:8000",
-        "http://localhost:56910", # Port utilisé par le client web local
-        "http://localhost:49918", # Port dynamique du client web Flutter
+        "http://localhost:56910",
+        "http://localhost:49918",
     ]
 else:
     raw = getattr(settings, 'BACKEND_CORS_ORIGINS', None)
@@ -104,19 +96,13 @@ else:
     if not origins_to_allow:
         origins_to_allow = DEFAULT_PROD_ORIGINS
 
-# DEBUG: print effective CORS policy so logs in Render (or other hosts) confirm it
 print(f"🔐 CORS effective allow_origins: {origins_to_allow}")
-# Allow localhost origins on any port to simplify local development (both http and https).
-# This avoids frequent CORS errors when the frontend runs on localhost with a dynamic port.
-# In production, prefer configuring BACKEND_CORS_ORIGINS environment variable to restrict origins.
-regex_value = r"^https?://(localhost|127\\.0\\.0\\.1)(:[0-9]+)?$"
+regex_value = r"^https?://(localhost|127\.0\.0\.1)(:[0-9]+)?$"
 print(f"🔐 CORS allow_origin_regex: {regex_value}")
 
-# Apply middleware with secure defaults
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins_to_allow,
-    # Allow localhost with any port during development to avoid exact-port issues
     allow_origin_regex=regex_value,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
@@ -131,8 +117,6 @@ async def add_process_time_header(request: Request, call_next):
     response.headers["X-Process-Time"] = str(process_time)
     return response
 
-
-# Gestionnaire d'erreurs de validation
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     return JSONResponse(
@@ -141,11 +125,9 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     )
 
 # --- Inclusion des Routeurs API ---
-# On crée un routeur principal pour préfixer toutes les routes avec /api/v1
 api_router = APIRouter()
-
 api_router.include_router(auth.router, prefix="/auth", tags=["Authentication"])
-api_router.include_router(users.router, prefix="/users", tags=["Users"]) # 👈 **CORRECTION : Placer avant 'admin'**
+api_router.include_router(users.router, prefix="/users", tags=["Users"])
 api_router.include_router(admin.router, prefix="/admin", tags=["Administration"])
 api_router.include_router(students.router, prefix="/students", tags=["Students"])
 api_router.include_router(faculties.router, prefix="/faculties", tags=["Faculties & Structure"])
@@ -154,21 +136,15 @@ api_router.include_router(grades.router, prefix="/grades", tags=["Grades & Delib
 api_router.include_router(finances.router, prefix="/finances", tags=["Finances & Accounting"])
 api_router.include_router(messages.router, prefix="/messages", tags=["Messaging"])
 api_router.include_router(teacher.router, tags=["Teachers"])
-
-# Expose lightweight public listing endpoints implemented in admin.public_router
 api_router.include_router(admin.public_router, prefix="", tags=["Public"])
 
-# On inclut le routeur principal dans l'application
 app.include_router(api_router, prefix=settings.API_V1_STR)
 
-# --- Routes de base (non préfixées par /api/v1) ---
 @app.get("/health", tags=["Monitoring"])
 async def health_check():
     """Vérifie que le service est en ligne."""
     return {"status": "healthy"}
 
-
-# Route racine
 @app.get("/")
 async def root():
     """Route racine"""
@@ -179,8 +155,5 @@ async def root():
         "api": settings.API_V1_STR
     }
 
-
-# Pour lancer le serveur en mode développement, utilisez la commande suivante
-# dans le terminal à la racine du dossier 'backend':
-#
+# Pour lancer le serveur en mode développement :
 # uvicorn app.main:app --reload --reload-engine watchgod
