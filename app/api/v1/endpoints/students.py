@@ -3,16 +3,17 @@ Endpoints dédiés aux étudiants : dashboard mobile-first, academic progression
 documents et notifications. Conçu pour être défensif et renvoyer toujours une structure cohérente.
 """
 from typing import Any, List, Dict, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Body, Path
 from datetime import datetime, timedelta
 import logging
 
-from firebase_admin import firestore, messaging
+from firebase_admin import firestore, messaging, auth
 
 from app.core.security import get_current_active_user
 from app.models.firestore_models import get_doc, list_docs
 from app.core.config import settings
 from pydantic import BaseModel, Field
+from app.api.v1.endpoints.users import generate_random_password
 
 
 router = APIRouter()
@@ -45,6 +46,46 @@ class NotificationCreate(BaseModel):
     body: str
     data: Optional[Dict[str, str]] = None
     silent: Optional[bool] = False
+
+
+class StudentCreate(BaseModel):
+    email: str
+    password: str | None = None
+    first_name: str | None = None
+    last_name: str | None = None
+    full_name: str | None = None
+    phone: str | None = None
+    gender: str | None = None
+    matricule: str | None = None
+    birthdate: str | None = None
+    faculty_id: str | None = None
+    department_id: str | None = None
+    program_id: str | None = None
+    promotion_id: str | None = None
+    group_id: str | None = None
+    photo_base64: str | None = None
+    photo_filename: str | None = None
+    username: str | None = None
+
+
+class StudentUpdate(BaseModel):
+    email: str | None = None
+    password: str | None = None
+    first_name: str | None = None
+    last_name: str | None = None
+    full_name: str | None = None
+    phone: str | None = None
+    gender: str | None = None
+    matricule: str | None = None
+    birthdate: str | None = None
+    faculty_id: str | None = None
+    department_id: str | None = None
+    program_id: str | None = None
+    promotion_id: str | None = None
+    group_id: str | None = None
+    photo_base64: str | None = None
+    photo_filename: str | None = None
+    username: str | None = None
 
 
 # Helper utilities
@@ -794,3 +835,78 @@ async def send_notification_to_student(student_id: str, payload: NotificationCre
     except Exception as e:
         logging.exception('Error sending notification to %s: %s', student_id, e)
         return {'ok': False, 'error': str(e)}
+
+
+@router.post('/students', summary='Créer un étudiant avec Auth')
+async def create_student(student: StudentCreate, current_user: Any = Depends(get_current_active_user)):
+    """
+    Crée un étudiant dans Auth, users et students.
+    """
+    db = firestore.client()
+    # 1. Créer l'utilisateur dans Firebase Auth
+    password = student.password or generate_random_password()
+    try:
+        user_record = auth.create_user(
+            email=student.email,
+            password=password,
+            display_name=f"{student.first_name or ''} {student.last_name or ''}".strip(),
+        )
+    except auth.EmailAlreadyExistsError:
+        raise HTTPException(status_code=400, detail=f"L'email '{student.email}' est déjà utilisé par un autre compte.")
+    # 2. Créer le profil dans users
+    user_profile_data = {
+        "firebase_uid": user_record.uid,
+        "email": student.email,
+        "display_name": f"{student.first_name or ''} {student.last_name or ''}".strip(),
+        "first_name": student.first_name,
+        "last_name": student.last_name,
+        "role": "student",
+        "created_at": firestore.SERVER_TIMESTAMP,
+        "is_active": True,
+    }
+    db.collection("users").document(user_record.uid).set(user_profile_data, merge=True)
+    # 3. Créer le document dans students
+    student_data = student.model_dump(exclude_unset=True)
+    student_data["auth_uid"] = user_record.uid
+    student_data["created_at"] = firestore.SERVER_TIMESTAMP
+    student_data["updated_at"] = firestore.SERVER_TIMESTAMP
+    db.collection("students").document(user_record.uid).set(student_data, merge=True)
+    return {"ok": True, "uid": user_record.uid, "email": user_record.email, "generated_password": password if student.password is None else None}
+
+
+@router.put('/students/{student_id}', summary='Mettre à jour un étudiant avec Auth')
+async def update_student(
+    student_id: str = Path(..., description='UID Firebase ou ID étudiant'),
+    student: StudentUpdate = Body(...),
+    current_user: Any = Depends(get_current_active_user)
+):
+    db = firestore.client()
+    # 1. Mettre à jour Firebase Auth
+    auth_updates = {}
+    if student.email:
+        auth_updates['email'] = student.email
+    if student.first_name or student.last_name:
+        full_name = f"{student.first_name or ''} {student.last_name or ''}".strip()
+        auth_updates['display_name'] = full_name
+    if student.password:
+        auth_updates['password'] = student.password
+    if auth_updates:
+        try:
+            auth.update_user(student_id, **auth_updates)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f'Erreur mise à jour Auth: {e}')
+    # 2. Mettre à jour users
+    user_ref = db.collection('users').document(student_id)
+    user_updates = student.model_dump(exclude_unset=True)
+    if 'password' in user_updates:
+        user_updates.pop('password')
+    user_updates['updated_at'] = firestore.SERVER_TIMESTAMP
+    user_ref.set(user_updates, merge=True)
+    # 3. Mettre à jour students
+    student_ref = db.collection('students').document(student_id)
+    student_updates = student.model_dump(exclude_unset=True)
+    if 'password' in student_updates:
+        student_updates.pop('password')
+    student_updates['updated_at'] = firestore.SERVER_TIMESTAMP
+    student_ref.set(student_updates, merge=True)
+    return {"ok": True, "student_id": student_id}

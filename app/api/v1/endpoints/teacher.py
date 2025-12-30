@@ -4,16 +4,17 @@ supports pédagogiques, annonces/communication, notifications et gestion de prof
 Conçu pour être défensif et similaire à students.py.
 """
 from typing import Any, List, Dict, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from datetime import datetime, timedelta
 import logging
 
-from firebase_admin import firestore, messaging
+from firebase_admin import firestore, messaging, auth
 
 from app.core.security import get_current_active_user
 from app.models.firestore_models import get_doc, list_docs
 from app.core.config import settings
 from pydantic import BaseModel, Field
+from app.api.v1.endpoints.users import generate_random_password
 
 router = APIRouter()
 
@@ -46,6 +47,46 @@ class AnnouncementCreate(BaseModel):
     target_id: Optional[str] = None
     data: Optional[Dict[str, str]] = None
     silent: Optional[bool] = False
+
+
+class TeacherCreate(BaseModel):
+    email: str
+    password: str | None = None
+    first_name: str | None = None
+    last_name: str | None = None
+    full_name: str | None = None
+    phone: str | None = None
+    gender: str | None = None
+    matricule: str | None = None
+    birthdate: str | None = None
+    faculty_id: str | None = None
+    department_id: str | None = None
+    program_id: str | None = None
+    promotion_id: str | None = None
+    group_id: str | None = None
+    photo_base64: str | None = None
+    photo_filename: str | None = None
+    username: str | None = None
+
+
+class TeacherUpdate(BaseModel):
+    email: str | None = None
+    password: str | None = None
+    first_name: str | None = None
+    last_name: str | None = None
+    full_name: str | None = None
+    phone: str | None = None
+    gender: str | None = None
+    matricule: str | None = None
+    birthdate: str | None = None
+    faculty_id: str | None = None
+    department_id: str | None = None
+    program_id: str | None = None
+    promotion_id: str | None = None
+    group_id: str | None = None
+    photo_base64: str | None = None
+    photo_filename: str | None = None
+    username: str | None = None
 
 
 # Helpers
@@ -524,3 +565,69 @@ async def teacher_statistics(teacher_id: str, current_user: Any = Depends(get_cu
     except Exception as e:
         logging.exception('Error computing statistics for %s: %s', teacher_id, e)
         return {'ok': False, 'error': str(e), 'statistics': {}}
+
+
+@router.post('/teachers', summary='Créer un enseignant avec Auth')
+async def create_teacher(teacher: TeacherCreate, current_user: Any = Depends(get_current_active_user)):
+    db = firestore.client()
+    password = teacher.password or generate_random_password()
+    try:
+        user_record = auth.create_user(
+            email=teacher.email,
+            password=password,
+            display_name=f"{teacher.first_name or ''} {teacher.last_name or ''}".strip(),
+        )
+    except auth.EmailAlreadyExistsError:
+        raise HTTPException(status_code=400, detail=f"L'email '{teacher.email}' est déjà utilisé par un autre compte.")
+    user_profile_data = {
+        "firebase_uid": user_record.uid,
+        "email": teacher.email,
+        "display_name": f"{teacher.first_name or ''} {teacher.last_name or ''}".strip(),
+        "first_name": teacher.first_name,
+        "last_name": teacher.last_name,
+        "role": "teacher",
+        "created_at": firestore.SERVER_TIMESTAMP,
+        "is_active": True,
+    }
+    db.collection("users").document(user_record.uid).set(user_profile_data, merge=True)
+    teacher_data = teacher.model_dump(exclude_unset=True)
+    teacher_data["auth_uid"] = user_record.uid
+    teacher_data["created_at"] = firestore.SERVER_TIMESTAMP
+    teacher_data["updated_at"] = firestore.SERVER_TIMESTAMP
+    db.collection("teachers").document(user_record.uid).set(teacher_data, merge=True)
+    return {"ok": True, "uid": user_record.uid, "email": user_record.email, "generated_password": password if teacher.password is None else None}
+
+
+@router.put('/teachers/{teacher_id}', summary='Mettre à jour un enseignant avec Auth')
+async def update_teacher(
+    teacher_id: str = Path(..., description='UID Firebase ou ID enseignant'),
+    teacher: TeacherUpdate = Body(...),
+    current_user: Any = Depends(get_current_active_user)
+):
+    db = firestore.client()
+    auth_updates = {}
+    if teacher.email:
+        auth_updates['email'] = teacher.email
+    if teacher.first_name or teacher.last_name:
+        full_name = f"{teacher.first_name or ''} {teacher.last_name or ''}".strip()
+        auth_updates['display_name'] = full_name
+    if teacher.password:
+        auth_updates['password'] = teacher.password
+    if auth_updates:
+        try:
+            auth.update_user(teacher_id, **auth_updates)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f'Erreur mise à jour Auth: {e}')
+    user_ref = db.collection('users').document(teacher_id)
+    user_updates = teacher.model_dump(exclude_unset=True)
+    if 'password' in user_updates:
+        user_updates.pop('password')
+    user_updates['updated_at'] = firestore.SERVER_TIMESTAMP
+    user_ref.set(user_updates, merge=True)
+    teacher_ref = db.collection('teachers').document(teacher_id)
+    teacher_updates = teacher.model_dump(exclude_unset=True)
+    if 'password' in teacher_updates:
+        teacher_updates.pop('password')
+    teacher_updates['updated_at'] = firestore.SERVER_TIMESTAMP
+    teacher_ref.set(teacher_updates, merge=True)
+    return {"ok": True, "teacher_id": teacher_id}
